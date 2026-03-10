@@ -1,2 +1,12 @@
 fastapi
-uvicorn[standard]
+uvicorn
+pydantic_settings
+pydantic[email]
+sqlalchemy
+alembic
+asyncpg
+psycopg2-binary
+python-dotenv
+python-jose[cryptography]
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1

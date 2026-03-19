@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     admin_password: str = "admin"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
+    redis_url: str = "redis://redis:6379/0"
 
     class Config:
         env_file = ".env"

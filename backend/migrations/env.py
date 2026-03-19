@@ -23,6 +23,7 @@ sys.path.append("/app")
 
 from app.models import Base
 import app.users.models
+import app.assets.models
 
 from app.config import settings
 target_metadata = Base.metadata

@@ -56,3 +56,17 @@ class UploadResponseSchema(BaseModel):
 class AssetStatusSchema(BaseModel):
     asset_id: UUID
     status: str
+
+
+class AssetListItemSchema(BaseModel):
+    asset_id: UUID
+    title: str | None
+    status: str
+    created_at: datetime
+    thumbnail_file_id: UUID | None
+    thumbnail_url: str | None
+
+
+class AssetListResponseSchema(BaseModel):
+    items: list[AssetListItemSchema]
+    next_cursor: str | None

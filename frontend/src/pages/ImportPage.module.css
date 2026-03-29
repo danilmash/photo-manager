@@ -1,0 +1,124 @@
+.page {
+  padding: 12px 12px 24px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.header {
+  padding: 4px 2px 16px;
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+}
+
+.subtitle {
+  margin-top: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+.hiddenInput {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dropZone {
+  width: 100%;
+  min-height: 160px;
+  padding: 24px 16px;
+  border: 2px dashed var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dropZone:hover,
+.dropZone:focus-visible {
+  border-color: var(--color-accent);
+  background: var(--color-bg-tertiary);
+}
+
+.dropZoneActive {
+  border-color: var(--color-accent);
+  background: var(--color-accent-muted);
+}
+
+.dropHint {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+
+.list {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-secondary);
+}
+
+.rowTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.fileName {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
+.status {
+  flex-shrink: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.barTrack {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-accent);
+  transition: width 0.12s ease-out;
+}
+
+.pct {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+@media (min-width: 480px) {
+  .page {
+    padding: 16px 18px 28px;
+  }
+
+  .dropZone {
+    min-height: 200px;
+    padding: 32px 20px;
+  }
+}

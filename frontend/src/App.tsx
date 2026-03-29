@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage';
 import GalleryPage from './pages/GalleryPage';
 import AlbumsPage from './pages/AlbumsPage';
 import SettingsPage from './pages/SettingsPage';
+import ImportPage from './pages/ImportPage';
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
         <Route path="login" element={<LoginPage />} />
         <Route element={<Layout />}>
           <Route index element={<HomePage />} />
+          <Route path="import" element={<ImportPage />} />
           <Route path="gallery" element={<GalleryPage />} />
           <Route path="albums" element={<AlbumsPage />} />
           <Route path="settings" element={<SettingsPage />} />

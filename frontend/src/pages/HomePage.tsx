@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import styles from './HomePage.module.css';
 import { useAssetsFeedStore } from '../stores/useAssetsFeedStore';
+import ImportNavButton from '../components/ImportNavButton/ImportNavButton';
 
 function statusLabel(status: string) {
   if (status === 'importing') return 'Импорт...';
@@ -41,8 +42,13 @@ export default function HomePage() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1 className={styles.title}>Фото</h1>
-        <p className={styles.subtitle}>Общая библиотека</p>
+        <div className={styles.headerRow}>
+          <div>
+            <h1 className={styles.title}>Фото</h1>
+            <p className={styles.subtitle}>Общая библиотека</p>
+          </div>
+          <ImportNavButton />
+        </div>
       </header>
 
       {error && <div className={styles.error}>{error}</div>}

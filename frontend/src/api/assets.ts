@@ -59,3 +59,31 @@ export async function getAssetStatus(assetId: string): Promise<AssetStatusRespon
   return data;
 }
 
+export interface AssetVersionDetail {
+  id: string;
+  version_number: number;
+  exif: Record<string, unknown> | null;
+  iptc: Record<string, unknown> | null;
+  xmp: Record<string, unknown> | null;
+  other: Record<string, unknown> | null;
+  rating: number | null;
+  keywords: string[];
+  created_at: string;
+}
+
+export interface AssetDetail {
+  id: string;
+  title: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  preview_file_id: string | null;
+  preview_url: string | null;
+  version: AssetVersionDetail | null;
+}
+
+export async function getAsset(assetId: string): Promise<AssetDetail> {
+  const { data } = await api.get<AssetDetail>(`/assets/${assetId}`);
+  return data;
+}
+

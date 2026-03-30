@@ -11,7 +11,6 @@ interface UploadRow {
   progress: number;
   phase: RowPhase;
   message?: string;
-  icon?: string;
 }
 
 const POLL_MS = 1000;
@@ -104,7 +103,6 @@ export default function ImportPage() {
         fileName: f.name,
         progress: 0,
         phase: 'uploading' as const,
-        icon: 'image',
       }));
       setRows((prev) => [...prev, ...newRows]);
       newRows.forEach((row, i) => {
@@ -171,7 +169,6 @@ export default function ImportPage() {
         <ul className={styles.list}>
           {rows.map((row) => (
             <li key={row.id} className={styles.row}>
-              <div className={styles.rowIcon}>{row.icon}</div>
               <div className={styles.rowTop}>
                 <span className={styles.fileName}>{row.fileName}</span>
                 <span className={styles.status}>{phaseLabel(row.phase, row.message)}</span>

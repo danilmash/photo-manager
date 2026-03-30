@@ -38,6 +38,28 @@
   padding: 0;
 }
 
+.tileBtn {
+  all: unset;
+  display: block;
+  width: 100%;
+  padding: 0;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.tileBtn:disabled {
+  cursor: default;
+}
+
+.tileBtn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.tileBtn:not(:disabled):hover {
+  opacity: 0.96;
+}
+
 .tile {
   position: relative;
   overflow: hidden;

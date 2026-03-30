@@ -15,13 +15,43 @@ PREVIEW_SPECS = [
 ]
 
 
-def _extract_exif(img: Image) -> dict | None:
-    result = {}
+def _json_safe(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
+def _extract_metadata(img: Image) -> dict | None:
+    exif: dict = {}
+    iptc: dict = {}
+    xmp: dict = {}
+    other: dict = {}
     for key, value in img.metadata.items():
+        safe = _json_safe(value)
         if key.startswith("exif:"):
-            tag = key[len("exif:"):]
-            result[tag] = value
-    return result or None
+            exif[key[5:]] = safe
+        elif key.startswith("iptc:"):
+            iptc[key[5:]] = safe
+        elif key.startswith("xmp:"):
+            xmp[key[4:]] = safe
+        else:
+            other[key] = safe
+    out: dict = {}
+    if exif:
+        out["exif"] = exif
+    if iptc:
+        out["iptc"] = iptc
+    if xmp:
+        out["xmp"] = xmp
+    if other:
+        out["other"] = other
+    return out or None
 
 
 def _generate_preview(img: Image, *, long_side: int, quality: int, dest: Path):
@@ -55,7 +85,11 @@ def process_asset(asset_id: str, file_id: str):
             with Image(filename=str(file_path)) as img:
                 file_record.width = img.width
                 file_record.height = img.height
-                exif_data = _extract_exif(img)
+                meta = _extract_metadata(img) or {}
+                exif = meta.get("exif") if isinstance(meta.get("exif"), dict) else None
+                iptc = meta.get("iptc") if isinstance(meta.get("iptc"), dict) else None
+                xmp = meta.get("xmp") if isinstance(meta.get("xmp"), dict) else None
+                other = meta.get("other") if isinstance(meta.get("other"), dict) else None
 
                 for spec in PREVIEW_SPECS:
                     preview_filename = f"{spec['purpose']}.jpg"
@@ -88,7 +122,10 @@ def process_asset(asset_id: str, file_id: str):
                 asset_id=asset_id,
                 version_number=1,
                 recipe={},
-                exif_data=exif_data,
+                exif=exif,
+                iptc=iptc,
+                xmp=xmp,
+                other=other,
                 keywords=[],
             )
             db.add(version)

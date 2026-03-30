@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './HomePage.module.css';
 import { useAssetsFeedStore } from '../stores/useAssetsFeedStore';
 import ImportNavButton from '../components/ImportNavButton/ImportNavButton';
+import AssetPhotoModal from '../components/AssetPhotoModal/AssetPhotoModal';
+import type { AssetListItem } from '../api/assets';
 
 function statusLabel(status: string) {
   if (status === 'importing') return 'Импорт...';
@@ -12,6 +14,7 @@ function statusLabel(status: string) {
 export default function HomePage() {
   const { items, isLoading, error, nextCursor, loadInitial, loadMore } = useAssetsFeedStore();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<AssetListItem | null>(null);
 
   useEffect(() => {
     void loadInitial();
@@ -68,25 +71,41 @@ export default function HomePage() {
           {tiles.map((item) => {
             const isReady = item.status === 'ready' && !!item.thumbnail_url;
             return (
-              <div key={item.asset_id} className={styles.tile}>
-                {isReady ? (
-                  <img
-                    className={styles.img}
-                    src={item.thumbnail_url!}
-                    alt={item.title ?? 'Фото'}
-                    loading="lazy"
-                    decoding="async"
-                  />
-                ) : (
-                  <div className={styles.skeleton}>
-                    <span className={styles.badge}>{statusLabel(item.status)}</span>
-                  </div>
-                )}
-              </div>
+              <button
+                key={item.asset_id}
+                type="button"
+                className={styles.tileBtn}
+                disabled={!isReady}
+                onClick={() => setSelectedAsset(item)}
+                aria-label={item.title ? `Открыть: ${item.title}` : 'Открыть фото'}
+              >
+                <div className={styles.tile}>
+                  {isReady ? (
+                    <img
+                      className={styles.img}
+                      src={item.thumbnail_url!}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  ) : (
+                    <div className={styles.skeleton}>
+                      <span className={styles.badge}>{statusLabel(item.status)}</span>
+                    </div>
+                  )}
+                </div>
+              </button>
             );
           })}
         </div>
       )}
+
+      <AssetPhotoModal
+        assetId={selectedAsset?.asset_id ?? null}
+        fallbackThumbnailUrl={selectedAsset?.thumbnail_url}
+        fallbackTitle={selectedAsset?.title}
+        onClose={() => setSelectedAsset(null)}
+      />
 
       <div className={styles.footer}>
         {isLoading && hasItems && <div className={styles.more}>Загрузка…</div>}

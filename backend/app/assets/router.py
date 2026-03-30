@@ -13,12 +13,14 @@ from app.database import get_db
 from app.users.dependencies import get_current_user
 from app.users.models import User
 from app.config import settings
-from app.assets.models import Asset, File as AssetFileModel
+from app.assets.models import Asset, AssetVersion, File as AssetFileModel
 from app.assets.schemas import (
     UploadResponseSchema,
     AssetStatusSchema,
     AssetListItemSchema,
     AssetListResponseSchema,
+    AssetDetailResponse,
+    AssetVersionDetailSchema,
 )
 from app.assets.tasks import process_asset
 
@@ -172,6 +174,64 @@ def get_asset_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл отсутствует на диске")
 
     return FileResponse(path, media_type=f.mime_type, filename=f.filename)
+
+
+@router.get("/{asset_id}", response_model=AssetDetailResponse)
+def get_asset_detail(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = db.query(Asset).filter_by(id=asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ассет не найден")
+
+    preview = (
+        db.query(AssetFileModel)
+        .filter_by(asset_id=asset_id, purpose="preview")
+        .order_by(AssetFileModel.created_at.desc())
+        .first()
+    )
+    preview_id = preview.id if preview else None
+    preview_url = f"/api/v1/assets/files/{preview_id}" if preview_id else None
+
+    version = (
+        db.query(AssetVersion)
+        .filter_by(asset_id=asset_id)
+        .order_by(AssetVersion.version_number.desc())
+        .first()
+    )
+    version_detail: AssetVersionDetailSchema | None = None
+    if version:
+        kw = version.keywords
+        if kw is None:
+            kw_list: list[str] = []
+        elif isinstance(kw, list):
+            kw_list = [str(x) for x in kw]
+        else:
+            kw_list = []
+        version_detail = AssetVersionDetailSchema(
+            id=version.id,
+            version_number=version.version_number,
+            exif=version.exif,
+            iptc=version.iptc,
+            xmp=version.xmp,
+            other=version.other,
+            rating=version.rating,
+            keywords=kw_list,
+            created_at=version.created_at,
+        )
+
+    return AssetDetailResponse(
+        id=asset.id,
+        title=asset.title,
+        status=asset.status,
+        created_at=asset.created_at,
+        updated_at=asset.updated_at,
+        preview_file_id=preview_id,
+        preview_url=preview_url,
+        version=version_detail,
+    )
 
 
 @router.get("/{asset_id}/status", response_model=AssetStatusSchema)

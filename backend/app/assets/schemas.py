@@ -21,7 +21,10 @@ class AssetVersionSchema(BaseModel):
     id: UUID
     version_number: int
     recipe: dict
-    exif_data: dict | None
+    exif: dict | None
+    iptc: dict | None
+    xmp: dict | None
+    other: dict | None
     rating: int | None
     keywords: list[str]
     created_at: datetime
@@ -39,6 +42,29 @@ class AssetSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AssetVersionDetailSchema(BaseModel):
+    id: UUID
+    version_number: int
+    exif: dict | None
+    iptc: dict | None
+    xmp: dict | None
+    other: dict | None
+    rating: int | None
+    keywords: list[str]
+    created_at: datetime
+
+
+class AssetDetailResponse(BaseModel):
+    id: UUID
+    title: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    preview_file_id: UUID | None
+    preview_url: str | None
+    version: AssetVersionDetailSchema | None
 
 
 class AssetDetailSchema(AssetSchema):

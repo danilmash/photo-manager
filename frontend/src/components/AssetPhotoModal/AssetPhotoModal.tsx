@@ -48,14 +48,12 @@ function MetadataSections({
 }) {
   const metadata: Record<string, unknown> = { exif, iptc, xmp, other };
 
-  let anySection = false;
-  const blocks = META_SECTIONS.map((key) => {
+  const blocks = META_SECTIONS.flatMap((key) => {
     const block = metadata[key];
     if (!hasSectionContent(block)) {
-      return null;
+      return [];
     }
-    anySection = true;
-    return (
+    return [
       <section key={key} className={styles.metaSection}>
         <h3 className={styles.metaHeading}>{META_LABELS[key]}</h3>
         <dl className={styles.dl}>
@@ -66,11 +64,11 @@ function MetadataSections({
             </div>
           ))}
         </dl>
-      </section>
-    );
+      </section>,
+    ];
   });
 
-  if (!anySection) {
+  if (blocks.length === 0) {
     return <p className={styles.muted}>Нет метаданных</p>;
   }
 

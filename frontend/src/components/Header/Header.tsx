@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Images, FolderOpen, Settings, Sun, Moon } from 'lucide-react';
+import { Home, Images, FolderOpen, Settings, Sun, Moon, Upload } from 'lucide-react';
 import { useThemeStore } from '../../stores/useThemeStore';
 import styles from './Header.module.css';
 
 const navItems = [
   { to: '/', label: 'Главная', icon: Home },
   { to: '/gallery', label: 'Галерея', icon: Images },
+  { to: '/import', label: 'Импорт', icon: Upload },
   { to: '/albums', label: 'Альбомы', icon: FolderOpen },
   { to: '/settings', label: 'Настройки', icon: Settings },
 ] as const;

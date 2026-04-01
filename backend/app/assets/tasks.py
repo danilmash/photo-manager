@@ -1,12 +1,15 @@
+import datetime
 import uuid
 from pathlib import Path
 
+from app.faces.models import FaceDetection
+from app.assets.ml_service import detect_faces
 from wand.image import Image
 
 from app.celery_app import celery
 from app.config import settings
 from app.database import SessionLocal
-import app.users.models  # noqa: F401
+import app.users.models
 from app.assets.models import Asset, File, AssetVersion
 
 PREVIEW_SPECS = [
@@ -67,6 +70,27 @@ def _generate_preview(img: Image, *, long_side: int, quality: int, dest: Path):
         dest.parent.mkdir(parents=True, exist_ok=True)
         copy.save(filename=str(dest))
 
+def _save_face_detections(db, asset_id: str, preview_path: Path):
+    """Отправляет превью в ml сервис и сохраняет найденные лица"""
+    try:
+        faces = detect_faces(str(preview_path))
+    except Exception as e:
+        # ml сервис недоступен — не падаем, просто пропускаем
+        print(f"[faces] ml сервис недоступен: {e}")
+        return
+
+    for face in faces:
+        # Пропускаем лица с низкой уверенностью
+        if face["confidence"] < 0.7:
+            continue
+
+        db.add(FaceDetection(
+            asset_id=asset_id,
+            bbox=face["bbox"],
+            embedding=face["embedding"],
+            confidence=face["confidence"],
+            created_at=datetime.datetime.now(),
+        ))
 
 @celery.task(name="app.assets.tasks.process_asset")
 def process_asset(asset_id: str, file_id: str):
@@ -80,6 +104,7 @@ def process_asset(asset_id: str, file_id: str):
 
         file_path = Path(settings.storage_root) / file_record.path
         storage = Path(settings.storage_root)
+        preview_path = None  # путь к превью для ml
 
         try:
             with Image(filename=str(file_path)) as img:
@@ -118,6 +143,10 @@ def process_asset(asset_id: str, file_id: str):
                         purpose=spec["purpose"],
                     ))
 
+                    # Запоминаем путь к большому превью для ml
+                    if spec["purpose"] == "preview":
+                        preview_path = dest
+
             version = AssetVersion(
                 asset_id=asset_id,
                 version_number=1,
@@ -129,6 +158,13 @@ def process_asset(asset_id: str, file_id: str):
                 keywords=[],
             )
             db.add(version)
+            db.flush()
+
+            # Детекция лиц — используем превью а не оригинал
+            # превью достаточно по качеству и намного меньше по размеру
+            if preview_path and preview_path.exists():
+                _save_face_detections(db, asset_id, preview_path)
+
             asset.status = "ready"
             db.commit()
         except Exception:

@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
     redis_url: str = "redis://redis:6379/0"
+    ml_service_url: str = "http://ml:8001"
 
     class Config:
         env_file = ".env"

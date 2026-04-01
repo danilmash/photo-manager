@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:15
+    image: pgvector/pgvector:pg15-trixie
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -51,5 +51,19 @@ services:
     depends_on:
       - api
 
+  ml:
+    build: ./ml
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./ml:/app
+      - ml_models:/root/.deepface
+    restart: unless-stopped
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+      TF_FORCE_GPU_ALLOW_GROWTH: "false"
+      TF_ENABLE_ONEDNN_OPTS: "1"
+
 volumes:
   postgres_data:
+  ml_models:

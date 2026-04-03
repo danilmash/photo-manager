@@ -22,7 +22,9 @@ from app.assets.schemas import (
     AssetDetailResponse,
     AssetVersionDetailSchema,
 )
+from app.faces.models import FaceDetection
 from app.assets.tasks import process_asset
+from app.faces.schemas import FaceDetectionSchema, PersonSchema
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
@@ -210,9 +212,27 @@ def get_asset_detail(
             kw_list = [str(x) for x in kw]
         else:
             kw_list = []
+        face_detections = db.query(FaceDetection).filter_by(asset_id=asset_id).all()
+
         version_detail = AssetVersionDetailSchema(
             id=version.id,
             version_number=version.version_number,
+            face_detections=[FaceDetectionSchema(
+                id=detection.id,
+                asset_id=detection.asset_id,
+                person_id=detection.person_id,
+                bbox=detection.bbox,
+                embedding=detection.embedding,
+                confidence=detection.confidence,
+                created_at=detection.created_at,
+                person=PersonSchema(
+                    id=detection.person.id,
+                    name=detection.person.name,
+                    cover_face_id=detection.person.cover_face_id,
+                    created_at=detection.person.created_at,
+                    updated_at=detection.person.updated_at,
+                ) if detection.person else None,
+            ) for detection in face_detections],
             exif=version.exif,
             iptc=version.iptc,
             xmp=version.xmp,

@@ -2,6 +2,8 @@ from pydantic import BaseModel
 from datetime import datetime
 from uuid import UUID
 
+from app.faces.schemas import FaceDetectionSchema
+
 
 class FileSchema(BaseModel):
     id: UUID
@@ -43,10 +45,10 @@ class AssetSchema(BaseModel):
     class Config:
         from_attributes = True
 
-
 class AssetVersionDetailSchema(BaseModel):
     id: UUID
     version_number: int
+    face_detections: list[FaceDetectionSchema] | None
     exif: dict | None
     iptc: dict | None
     xmp: dict | None

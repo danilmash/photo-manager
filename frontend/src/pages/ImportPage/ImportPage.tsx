@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import styles from './ImportPage.module.css';
-import { useImportStore } from '../stores/useImportStore';
+import { useImportStore } from '../../stores/useImportStore';
 
 function phaseLabel(phase: 'uploading' | 'processing' | 'ready' | 'error', message?: string) {
   if (message) return message;

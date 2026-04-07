@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { Home, Images, FolderOpen, Settings, Sun, Moon, Upload } from 'lucide-react';
-import { useThemeStore } from '../../stores/useThemeStore';
+import { useThemeStore } from '../../../stores/useThemeStore';
 import styles from './Header.module.css';
 
 const navItems = [
@@ -18,7 +18,6 @@ export default function Header() {
     <header className={styles.header}>
       <div className={styles.topBar}>
         <span className={styles.logo}>Photo Manager</span>
-
         <nav className={styles.desktopNav}>
           {navItems.map(({ to, label }) => (
             <NavLink

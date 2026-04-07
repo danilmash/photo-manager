@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './HomePage.module.css';
-import { useAssetsFeedStore } from '../stores/useAssetsFeedStore';
-import ImportNavButton from '../components/ImportNavButton/ImportNavButton';
-import AssetPhotoModal from '../components/AssetPhotoModal/AssetPhotoModal';
-import type { AssetListItem } from '../api/assets';
+import { useAssetsFeedStore } from '../../stores/useAssetsFeedStore';
+import AssetPhotoModal from '../../components/AssetPhotoModal/AssetPhotoModal';
+import type { AssetListItem } from '../../api/assets';
+import Button from '../../components/ui/Button';
+import { Upload } from 'lucide-react';
 
 function statusLabel(status: string) {
   if (status === 'importing') return 'Импорт...';
@@ -50,7 +51,9 @@ export default function HomePage() {
             <h1 className={styles.title}>Фото</h1>
             <p className={styles.subtitle}>Общая библиотека</p>
           </div>
-          <ImportNavButton />
+          <Button color="primary" variant='filled' size='l' to='/import' icon={<Upload />} >
+            Импорт
+          </Button>
         </div>
       </header>
 

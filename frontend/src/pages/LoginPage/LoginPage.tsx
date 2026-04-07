@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../stores/useAuthStore';
+import { useAuthStore } from '../../stores/useAuthStore';
 import styles from './LoginPage.module.css';
 
 export default function LoginPage() {

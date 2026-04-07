@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
-import { useAuthStore } from '../../stores/useAuthStore';
-import Header from '../Header/Header';
+import Header from '../Header';
 import styles from './Layout.module.css';
+import { useAuthStore } from '../../../stores/useAuthStore';
 
 export default function Layout() {
   const { isAuthenticated, isLoading, checkAuth } = useAuthStore();

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, X } from 'lucide-react';
+import { X, Pencil } from 'lucide-react';
+import Button from '../ui/Button';
 import { getAsset, type AssetDetail } from '../../api/assets';
 import styles from './AssetPhotoModal.module.css';
 
@@ -187,22 +188,10 @@ export default function AssetPhotoModal({
             {headerTitle}
           </h2>
           <div className={styles.headerActions}>
-            <button
-              type="button"
-              className={styles.editBtn}
-              aria-label="Редактировать (скоро)"
-            >
-              <Pencil size={18} strokeWidth={2} aria-hidden />
-              <span>Редактировать</span>
-            </button>
-            <button
-              type="button"
-              className={styles.closeBtn}
-              onClick={onClose}
-              aria-label="Закрыть"
-            >
-              <X size={22} strokeWidth={2} aria-hidden />
-            </button>
+            <Button color="muted" variant='outline' size='m' onClick={() => {alert('Пока не реализовано')}} disabled={!detail} icon={<Pencil />} >
+              Редактировать
+            </Button>
+            <Button color='muted' variant='ghost' size='m' onClick={onClose} icon={<X />} aria-label="Закрыть" />
           </div>
         </header>
 

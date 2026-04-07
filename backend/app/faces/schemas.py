@@ -17,5 +17,5 @@ class FaceDetectionSchema(BaseModel):
     bbox: dict
     embedding: list[float]
     confidence: float
-    created_at: datetime
+    created_at: datetime    
     person: PersonSchema | None

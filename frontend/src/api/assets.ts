@@ -22,6 +22,8 @@ export interface AssetListItem {
   created_at: string;
   thumbnail_file_id: string | null;
   thumbnail_url: string | null;
+  preview_file_id: string | null;
+  preview_url: string | null;
 }
 
 export interface AssetListResponse {

@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './HomePage.module.css';
 import { useAssetsFeedStore } from '../../stores/useAssetsFeedStore';
 import AssetPhotoModal from '../../components/AssetPhotoModal/AssetPhotoModal';
-import type { AssetListItem } from '../../api/assets';
+import { listAssets, type AssetListItem } from '../../api/assets';
 import Button from '../../components/ui/Button';
 import { Upload } from 'lucide-react';
+import PhotoCarousel from '../../components/ui/PhotoCarousel';
+import Modal from '../../components/ui/Modal';
+import PhotoViewer from '../../components/ui/PhotoViewer';
 
 function statusLabel(status: string) {
   if (status === 'importing') return 'Импорт...';
@@ -103,18 +106,45 @@ export default function HomePage() {
         </div>
       )}
 
-      <AssetPhotoModal
+      {/* <AssetPhotoModal
         assetId={selectedAsset?.asset_id ?? null}
         fallbackThumbnailUrl={selectedAsset?.thumbnail_url}
         fallbackTitle={selectedAsset?.title}
         onClose={() => setSelectedAsset(null)}
       />
 
+      
+      <PhotoCarousel
+        photos={items}
+        currentIndex={selectedAsset ? items.indexOf(selectedAsset) : 0}
+        onSelect={(index) => {setSelectedAsset(items[index])}}
+      />
+
       <div className={styles.footer}>
         {isLoading && hasItems && <div className={styles.more}>Загрузка…</div>}
         {!nextCursor && hasItems && <div className={styles.moreMuted}>Конец ленты</div>}
         <div ref={sentinelRef} className={styles.sentinel} />
-      </div>
+      </div> */}
+
+      <Modal variant='fullscreen' isOpen={!!selectedAsset} onClose={() => setSelectedAsset(null)}>
+        <PhotoViewer
+          photos={items}
+          currentIndex={selectedAsset ? items.indexOf(selectedAsset) : 0}
+          onPrevious={() => {
+            const index = selectedAsset ? items.indexOf(selectedAsset) : 0;
+            if (index > 0) {
+              setSelectedAsset(items[index - 1]);
+            }
+          }}
+          onNext={() => {
+            const index = selectedAsset ? items.indexOf(selectedAsset) : 0;
+            if (index < items.length - 1) {
+              setSelectedAsset(items[index + 1]);
+            }
+          }}
+          onSelect={(index) => setSelectedAsset(items[index])}
+        />
+      </Modal>
     </div>
   );
 }

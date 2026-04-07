@@ -126,6 +126,7 @@ def list_assets(
     q = (
         db.query(Asset, thumb_sq.c.id.label("thumb_id"))
         .outerjoin(thumb_sq, thumb_sq.c.asset_id == Asset.id)
+        .filter(Asset.status != "error" or Asset.status != "importing")
         .order_by(Asset.created_at.desc(), Asset.id.desc())
     )
 
@@ -142,6 +143,14 @@ def list_assets(
 
     items: list[AssetListItemSchema] = []
     for asset, thumb_id in rows:
+        preview = (
+            db.query(AssetFileModel)
+            .filter_by(asset_id=asset.id, purpose="preview")
+            .order_by(AssetFileModel.created_at.desc())
+            .first()
+        )
+        preview_id = preview.id if preview else None
+        
         items.append(
             AssetListItemSchema(
                 asset_id=asset.id,
@@ -150,6 +159,8 @@ def list_assets(
                 created_at=asset.created_at,
                 thumbnail_file_id=thumb_id,
                 thumbnail_url=(f"/api/v1/assets/files/{thumb_id}" if thumb_id else None),
+                preview_file_id=preview_id,
+                preview_url = f"/api/v1/assets/files/{preview_id}" if preview_id else None
             )
         )
 

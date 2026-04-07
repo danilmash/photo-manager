@@ -1,0 +1,18 @@
+.photo-carousel {
+    display: flex;
+    flex-direction: row;
+    align-items: end;
+    gap: 0.5em;
+    padding: 0.5em 1em;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.photo-carousel img {
+    width: 100px;
+    height: 100px;
+    object-fit: contain;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 2px solid transparent;
+}

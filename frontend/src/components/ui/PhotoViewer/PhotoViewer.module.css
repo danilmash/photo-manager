@@ -1,0 +1,50 @@
+.viewer {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    width: 100%;
+}
+
+.image {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+
+    display: block;
+    max-width: 100%;
+    max-height: 95%;
+    object-fit: contain;
+    user-select: none;
+    will-change: transform, opacity;
+}
+
+.stage {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 24px;
+}
+
+.footer {
+    flex: 0 0 auto;
+}
+
+.prev-button {
+    position: absolute;
+    top: 50%;
+    left: 10px;
+    transform: translateY(-50%);
+}
+
+.next-button {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+}

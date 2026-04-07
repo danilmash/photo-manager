@@ -93,6 +93,8 @@ class AssetListItemSchema(BaseModel):
     created_at: datetime
     thumbnail_file_id: UUID | None
     thumbnail_url: str | None
+    preview_file_id: UUID | None
+    preview_url: str | None
 
 
 class AssetListResponseSchema(BaseModel):

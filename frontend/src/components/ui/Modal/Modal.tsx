@@ -7,9 +7,10 @@ interface ModalProps {
     onClose: () => void;
     children: React.ReactNode;
     variant?: 'default' | 'fullscreen';
+    dark: boolean;
 }
 
-export default function Modal({ isOpen, onClose, children, variant = 'default' }: ModalProps) {
+export default function Modal({ isOpen, onClose, children, variant = 'default', dark = false }: ModalProps) {
     const panelClass = variant === 'fullscreen' ? styles['panel-fullscreen'] : styles.panel;
     
     useEffect(() => {
@@ -33,7 +34,7 @@ export default function Modal({ isOpen, onClose, children, variant = 'default' }
     if (!isOpen) return null;
 
     return createPortal(
-        <div className={styles.backdrop} onClick={onClose}>
+        <div className={`${styles.backdrop} ${dark ? styles.dark : ""}`} onClick={onClose}>
         <div
             className={panelClass}
             onClick={(e) => e.stopPropagation()}

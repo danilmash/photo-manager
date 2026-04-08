@@ -27,6 +27,7 @@
   --color-success: #4caf6a;
 
   --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-overlay-dark: rgba(0, 0, 0, 0.9)
 }
 
 /* ===== Light Theme ===== */
@@ -58,4 +59,5 @@
   --color-success: #3a9157;
 
   --color-overlay: rgba(0, 0, 0, 0.35);
+  --color-overlay-dark: rgba(0, 0, 0, 0.9)
 }

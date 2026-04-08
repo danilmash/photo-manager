@@ -10,6 +10,10 @@
   background: var(--color-overlay);
 }
 
+.dark {
+    background-color: var(--color-overlay-dark);;
+}
+
 .panel {
     width: 100%;
     max-width: 920px;

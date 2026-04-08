@@ -50,9 +50,11 @@ export async function uploadAsset(
 ): Promise<UploadAssetResponse> {
   const formData = new FormData();
   formData.append('file', file);
+
   const { data } = await api.post<UploadAssetResponse>('/assets/upload', formData, {
     onUploadProgress,
   });
+
   return data;
 }
 
@@ -61,31 +63,76 @@ export async function getAssetStatus(assetId: string): Promise<AssetStatusRespon
   return data;
 }
 
-export interface AssetVersionDetail {
+/**
+ * Viewer / Drawer
+ */
+
+export interface AssetPhotoInfo {
+  filename: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  width: unknown | null;
+  height: unknown | null;
+  taken_at: unknown | null;
+  camera_make: unknown | null;
+  camera_model: unknown | null;
+  lens: unknown | null;
+  iso: unknown | null;
+  aperture: unknown | null;
+  shutter_speed: unknown | null;
+  focal_length: unknown | null;
+  rating: number | null;
+  keywords: string[];
+}
+
+export interface AssetViewerFace {
   id: string;
-  version_number: number;
+  person_id: string | null;
+  person_name: string | null;
+  bbox: unknown | null;
+  confidence: number | null;
+}
+
+export interface AssetViewer {
+  id: string;
+  title: string | null;
+  status: AssetStatus;
+  created_at: string;
+  updated_at: string | null;
+  preview_file_id: string | null;
+  preview_url: string | null;
+  photo: AssetPhotoInfo;
+  faces: AssetViewerFace[];
+  faces_count: number;
+}
+
+export async function getAssetViewer(assetId: string): Promise<AssetViewer> {
+  const { data } = await api.get<AssetViewer>(`/assets/${assetId}`);
+  return data;
+}
+
+export interface AssetMetadata {
+  version_id: string | null;
+  version_number: number | null;
   exif: Record<string, unknown> | null;
   iptc: Record<string, unknown> | null;
   xmp: Record<string, unknown> | null;
   other: Record<string, unknown> | null;
   rating: number | null;
   keywords: string[];
-  created_at: string;
+  created_at: string | null;
 }
 
-export interface AssetDetail {
+export interface AssetMetadataResponse {
   id: string;
   title: string | null;
-  status: string;
+  status: AssetStatus;
   created_at: string;
-  updated_at: string;
-  preview_file_id: string | null;
-  preview_url: string | null;
-  version: AssetVersionDetail | null;
+  updated_at: string | null;
+  metadata: AssetMetadata | null;
 }
 
-export async function getAsset(assetId: string): Promise<AssetDetail> {
-  const { data } = await api.get<AssetDetail>(`/assets/${assetId}`);
+export async function getAssetMetadata(assetId: string): Promise<AssetMetadataResponse> {
+  const { data } = await api.get<AssetMetadataResponse>(`/assets/${assetId}/metadata`);
   return data;
 }
-

@@ -100,3 +100,69 @@ class AssetListItemSchema(BaseModel):
 class AssetListResponseSchema(BaseModel):
     items: list[AssetListItemSchema]
     next_cursor: str | None
+
+from datetime import datetime
+from uuid import UUID
+from typing import Any
+
+from pydantic import BaseModel
+
+
+class AssetPhotoInfoSchema(BaseModel):
+    filename: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    width: Any | None = None
+    height: Any | None = None
+    taken_at: Any | None = None
+    camera_make: Any | None = None
+    camera_model: Any | None = None
+    lens: Any | None = None
+    iso: Any | None = None
+    aperture: Any | None = None
+    shutter_speed: Any | None = None
+    focal_length: Any | None = None
+    rating: int | None = None
+    keywords: list[str] = []
+
+
+class AssetViewerFaceSchema(BaseModel):
+    id: UUID
+    person_id: UUID | None = None
+    person_name: str | None = None
+    bbox: Any | None = None
+    confidence: float | None = None
+
+
+class AssetViewerResponseSchema(BaseModel):
+    id: UUID
+    title: str
+    status: str
+    created_at: datetime
+    updated_at: datetime | None = None
+    preview_file_id: UUID | None = None
+    preview_url: str | None = None
+    photo: AssetPhotoInfoSchema
+    faces: list[AssetViewerFaceSchema]
+    faces_count: int
+
+
+class AssetMetadataSchema(BaseModel):
+    version_id: UUID | None = None
+    version_number: int | None = None
+    exif: dict[str, Any] | None = None
+    iptc: dict[str, Any] | None = None
+    xmp: dict[str, Any] | None = None
+    other: dict[str, Any] | None = None
+    rating: int | None = None
+    keywords: list[str] = []
+    created_at: datetime | None = None
+
+
+class AssetMetadataResponseSchema(BaseModel):
+    id: UUID
+    title: str
+    status: str
+    created_at: datetime
+    updated_at: datetime | None = None
+    metadata: AssetMetadataSchema | None = None

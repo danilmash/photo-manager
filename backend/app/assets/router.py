@@ -3,10 +3,11 @@ import shutil
 import base64
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, UploadFile, HTTPException, status
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select
 
 from app.database import get_db
@@ -19,12 +20,14 @@ from app.assets.schemas import (
     AssetStatusSchema,
     AssetListItemSchema,
     AssetListResponseSchema,
-    AssetDetailResponse,
-    AssetVersionDetailSchema,
+    AssetViewerResponseSchema,
+    AssetViewerFaceSchema,
+    AssetPhotoInfoSchema,
+    AssetMetadataSchema,
+    AssetMetadataResponseSchema,
 )
 from app.faces.models import FaceDetection
 from app.assets.tasks import process_asset
-from app.faces.schemas import FaceDetectionSchema, PersonSchema
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
@@ -47,6 +50,121 @@ def _decode_cursor(cursor: str) -> tuple[datetime, uuid_mod.UUID]:
     raw = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
     created_at_s, asset_id_s = raw.split("|", 1)
     return datetime.fromisoformat(created_at_s), uuid_mod.UUID(asset_id_s)
+
+
+def _build_file_url(file_id: uuid_mod.UUID | None) -> str | None:
+    if not file_id:
+        return None
+    return f"/api/v1/assets/files/{file_id}"
+
+
+def _get_asset_or_404(db: Session, asset_id: uuid_mod.UUID) -> Asset:
+    asset = db.query(Asset).filter_by(id=asset_id).first()
+    if not asset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ассет не найден",
+        )
+    return asset
+
+
+def _get_latest_file(
+    db: Session,
+    asset_id: uuid_mod.UUID,
+    purpose: str,
+) -> AssetFileModel | None:
+    return (
+        db.query(AssetFileModel)
+        .filter_by(asset_id=asset_id, purpose=purpose)
+        .order_by(AssetFileModel.created_at.desc())
+        .first()
+    )
+
+
+def _get_latest_version(
+    db: Session,
+    asset_id: uuid_mod.UUID,
+) -> AssetVersion | None:
+    return (
+        db.query(AssetVersion)
+        .filter_by(asset_id=asset_id)
+        .order_by(AssetVersion.version_number.desc())
+        .first()
+    )
+
+
+def _normalize_keywords(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(x) for x in value]
+    return []
+
+
+def _deep_get(data: dict[str, Any] | None, *paths: str) -> Any | None:
+    """
+    Пример:
+    _deep_get(exif, "DateTimeOriginal", "EXIF.DateTimeOriginal", "IFD0.Model")
+    """
+    if not isinstance(data, dict):
+        return None
+
+    for path in paths:
+        current: Any = data
+        found = True
+
+        for key in path.split("."):
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                found = False
+                break
+
+        if found and current not in (None, "", [], {}):
+            return current
+
+    return None
+
+
+def _build_photo_info(
+    version: AssetVersion | None,
+    original_file: AssetFileModel | None,
+) -> AssetPhotoInfoSchema:
+    exif = version.exif if version and isinstance(version.exif, dict) else {}
+    other = version.other if version and isinstance(version.other, dict) else {}
+
+    return AssetPhotoInfoSchema(
+        filename=original_file.filename if original_file else None,
+        mime_type=original_file.mime_type if original_file else None,
+        size_bytes=original_file.size_bytes if original_file else None,
+        width=_deep_get(
+            exif,
+            "ImageWidth",
+            "EXIF.ExifImageWidth",
+            "Composite.ImageWidth",
+        ) or _deep_get(other, "width"),
+        height=_deep_get(
+            exif,
+            "ImageHeight",
+            "EXIF.ExifImageHeight",
+            "Composite.ImageHeight",
+        ) or _deep_get(other, "height"),
+        taken_at=_deep_get(
+            exif,
+            "DateTimeOriginal",
+            "EXIF.DateTimeOriginal",
+            "Composite.SubSecDateTimeOriginal",
+        ),
+        camera_make=_deep_get(exif, "Make", "IFD0.Make"),
+        camera_model=_deep_get(exif, "Model", "IFD0.Model"),
+        lens=_deep_get(exif, "LensModel", "EXIF.LensModel"),
+        iso=_deep_get(exif, "ISOSpeedRatings", "EXIF.ISOSpeedRatings"),
+        aperture=_deep_get(exif, "FNumber", "EXIF.FNumber"),
+        shutter_speed=_deep_get(exif, "ExposureTime", "EXIF.ExposureTime"),
+        focal_length=_deep_get(exif, "FocalLength", "EXIF.FocalLength"),
+        rating=version.rating if version else None,
+        keywords=_normalize_keywords(version.keywords if version else None),
+    )
 
 
 @router.post("/upload", response_model=UploadResponseSchema)
@@ -112,26 +230,54 @@ def list_assets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # shared library: auth required, but no owner filter
     limit = max(1, min(limit, 200))
 
-    thumb_sq = (
-        select(AssetFileModel)
-        .where(AssetFileModel.purpose == "thumbnail")
-        .distinct(AssetFileModel.asset_id)
-        .order_by(AssetFileModel.asset_id, AssetFileModel.created_at.desc())
-        .subquery()
+    thumb_id_sq = (
+        select(AssetFileModel.id)
+        .where(
+            AssetFileModel.asset_id == Asset.id,
+            AssetFileModel.purpose == "thumbnail",
+        )
+        .order_by(AssetFileModel.created_at.desc())
+        .limit(1)
+        .correlate(Asset)
+        .scalar_subquery()
+    )
+
+    preview_id_sq = (
+        select(AssetFileModel.id)
+        .where(
+            AssetFileModel.asset_id == Asset.id,
+            AssetFileModel.purpose == "preview",
+        )
+        .order_by(AssetFileModel.created_at.desc())
+        .limit(1)
+        .correlate(Asset)
+        .scalar_subquery()
     )
 
     q = (
-        db.query(Asset, thumb_sq.c.id.label("thumb_id"))
-        .outerjoin(thumb_sq, thumb_sq.c.asset_id == Asset.id)
-        .filter(Asset.status != "error" or Asset.status != "importing")
+        db.query(
+            Asset.id.label("asset_id"),
+            Asset.title,
+            Asset.status,
+            Asset.created_at,
+            thumb_id_sq.label("thumb_id"),
+            preview_id_sq.label("preview_id"),
+        )
+        .filter(Asset.status.notin_(["error"]))
         .order_by(Asset.created_at.desc(), Asset.id.desc())
     )
 
     if cursor:
-        c_created_at, c_asset_id = _decode_cursor(cursor)
+        try:
+            c_created_at, c_asset_id = _decode_cursor(cursor)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Некорректный cursor",
+            )
+
         q = q.filter(
             (Asset.created_at < c_created_at)
             | ((Asset.created_at == c_created_at) & (Asset.id < c_asset_id))
@@ -142,34 +288,29 @@ def list_assets(
     rows = rows[:limit]
 
     items: list[AssetListItemSchema] = []
-    for asset, thumb_id in rows:
-        preview = (
-            db.query(AssetFileModel)
-            .filter_by(asset_id=asset.id, purpose="preview")
-            .order_by(AssetFileModel.created_at.desc())
-            .first()
-        )
-        preview_id = preview.id if preview else None
-        
+    for row in rows:
         items.append(
             AssetListItemSchema(
-                asset_id=asset.id,
-                title=asset.title,
-                status=asset.status,
-                created_at=asset.created_at,
-                thumbnail_file_id=thumb_id,
-                thumbnail_url=(f"/api/v1/assets/files/{thumb_id}" if thumb_id else None),
-                preview_file_id=preview_id,
-                preview_url = f"/api/v1/assets/files/{preview_id}" if preview_id else None
+                asset_id=row.asset_id,
+                title=row.title,
+                status=row.status,
+                created_at=row.created_at,
+                thumbnail_file_id=row.thumb_id,
+                thumbnail_url=_build_file_url(row.thumb_id),
+                preview_file_id=row.preview_id,
+                preview_url=_build_file_url(row.preview_id),
             )
         )
 
     next_cursor = None
     if has_more and rows:
-        last_asset = rows[-1][0]
-        next_cursor = _encode_cursor(last_asset.created_at, last_asset.id)
+        last_row = rows[-1]
+        next_cursor = _encode_cursor(last_row.created_at, last_row.asset_id)
 
-    return AssetListResponseSchema(items=items, next_cursor=next_cursor)
+    return AssetListResponseSchema(
+        items=items,
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/files/{file_id}")
@@ -180,88 +321,96 @@ def get_asset_file(
 ):
     f = db.query(AssetFileModel).filter_by(id=file_id).first()
     if not f:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден",
+        )
 
     path = Path(settings.storage_root) / f.path
     if not path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл отсутствует на диске")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл отсутствует на диске",
+        )
 
     return FileResponse(path, media_type=f.mime_type, filename=f.filename)
 
 
-@router.get("/{asset_id}", response_model=AssetDetailResponse)
-def get_asset_detail(
+@router.get("/{asset_id}", response_model=AssetViewerResponseSchema)
+def get_asset_viewer(
     asset_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = db.query(Asset).filter_by(id=asset_id).first()
-    if not asset:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ассет не найден")
+    asset = _get_asset_or_404(db, asset_id)
 
-    preview = (
-        db.query(AssetFileModel)
-        .filter_by(asset_id=asset_id, purpose="preview")
-        .order_by(AssetFileModel.created_at.desc())
-        .first()
+    preview = _get_latest_file(db, asset_id, "preview")
+    original = _get_latest_file(db, asset_id, "original")
+    version = _get_latest_version(db, asset_id)
+
+    detections = (
+        db.query(FaceDetection)
+        .options(joinedload(FaceDetection.person))
+        .filter(FaceDetection.asset_id == asset_id)
+        .order_by(FaceDetection.created_at.asc())
+        .all()
     )
-    preview_id = preview.id if preview else None
-    preview_url = f"/api/v1/assets/files/{preview_id}" if preview_id else None
 
-    version = (
-        db.query(AssetVersion)
-        .filter_by(asset_id=asset_id)
-        .order_by(AssetVersion.version_number.desc())
-        .first()
-    )
-    version_detail: AssetVersionDetailSchema | None = None
-    if version:
-        kw = version.keywords
-        if kw is None:
-            kw_list: list[str] = []
-        elif isinstance(kw, list):
-            kw_list = [str(x) for x in kw]
-        else:
-            kw_list = []
-        face_detections = db.query(FaceDetection).filter_by(asset_id=asset_id).all()
-
-        version_detail = AssetVersionDetailSchema(
-            id=version.id,
-            version_number=version.version_number,
-            face_detections=[FaceDetectionSchema(
-                id=detection.id,
-                asset_id=detection.asset_id,
-                person_id=detection.person_id,
-                bbox=detection.bbox,
-                embedding=detection.embedding,
-                confidence=detection.confidence,
-                created_at=detection.created_at,
-                person=PersonSchema(
-                    id=detection.person.id,
-                    name=detection.person.name,
-                    cover_face_id=detection.person.cover_face_id,
-                    created_at=detection.person.created_at,
-                    updated_at=detection.person.updated_at,
-                ) if detection.person else None,
-            ) for detection in face_detections],
-            exif=version.exif,
-            iptc=version.iptc,
-            xmp=version.xmp,
-            other=version.other,
-            rating=version.rating,
-            keywords=kw_list,
-            created_at=version.created_at,
+    faces = [
+        AssetViewerFaceSchema(
+            id=detection.id,
+            person_id=detection.person_id,
+            person_name=detection.person.name if detection.person else None,
+            bbox=detection.bbox,
+            confidence=detection.confidence,
         )
+        for detection in detections
+    ]
 
-    return AssetDetailResponse(
+    return AssetViewerResponseSchema(
         id=asset.id,
         title=asset.title,
         status=asset.status,
         created_at=asset.created_at,
         updated_at=asset.updated_at,
-        preview_file_id=preview_id,
-        preview_url=preview_url,
-        version=version_detail,
+        preview_file_id=preview.id if preview else None,
+        preview_url=_build_file_url(preview.id if preview else None),
+        photo=_build_photo_info(version, original),
+        faces=faces,
+        faces_count=len(faces),
+    )
+
+
+@router.get("/{asset_id}/metadata", response_model=AssetMetadataResponseSchema)
+def get_asset_metadata(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _get_asset_or_404(db, asset_id)
+    version = _get_latest_version(db, asset_id)
+
+    metadata = None
+    if version:
+        metadata = AssetMetadataSchema(
+            version_id=version.id,
+            version_number=version.version_number,
+            exif=version.exif,
+            iptc=version.iptc,
+            xmp=version.xmp,
+            other=version.other,
+            rating=version.rating,
+            keywords=_normalize_keywords(version.keywords),
+            created_at=version.created_at,
+        )
+
+    return AssetMetadataResponseSchema(
+        id=asset.id,
+        title=asset.title,
+        status=asset.status,
+        created_at=asset.created_at,
+        updated_at=asset.updated_at,
+        metadata=metadata,
     )
 
 
@@ -271,8 +420,6 @@ def get_asset_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = db.query(Asset).filter_by(id=asset_id).first()
-    if not asset:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ассет не найден")
+    asset = _get_asset_or_404(db, asset_id)
 
     return AssetStatusSchema(asset_id=asset.id, status=asset.status)

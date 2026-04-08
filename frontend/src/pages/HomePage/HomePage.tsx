@@ -106,6 +106,7 @@ export default function HomePage() {
 
       <Modal dark={true} variant='fullscreen' isOpen={!!selectedAsset} onClose={() => setSelectedAsset(null)}>
         <PhotoViewer
+          onClose={() => setSelectedAsset(null)}
           photos={items}
           currentIndex={selectedAsset ? items.indexOf(selectedAsset) : 0}
           onPrevious={() => {

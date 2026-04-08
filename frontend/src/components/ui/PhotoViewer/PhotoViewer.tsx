@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { ArrowLeft, ChevronRight, ChevronLeft, Ellipsis, Info } from 'lucide-react';
 
 import styles from './PhotoViewer.module.css';
 import type { AssetListItem } from '../../../api/assets';
 import Button from '../Button';
 import PhotoCarousel from '../PhotoCarousel';
+import Drawer from '../Drawer';
 
 interface PhotoViewerProps {
     photos: AssetListItem[];
@@ -13,6 +14,7 @@ interface PhotoViewerProps {
     onPrevious: () => void;
     onNext: () => void;
     onSelect: (index: number) => void;
+    onClose: () => void;
 }
 
 type Direction = 1 | -1;
@@ -41,9 +43,12 @@ export default function PhotoViewer({
     onPrevious,
     onNext,
     onSelect,
+    onClose,
 }: PhotoViewerProps) {
     const [direction, setDirection] = useState<Direction>(1);
+    const [infoDrawerOpen, setInfoDrawerOpen] = useState(false);
     const prevIndexRef = useRef(currentIndex);
+    const viewerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (currentIndex > prevIndexRef.current) {
@@ -99,55 +104,67 @@ export default function PhotoViewer({
     if (!currentPhoto || !photoSrc) return null;
 
     return (
-        <div className={styles.viewer}>
-        <div className={styles.stage}>
-            <AnimatePresence initial={false} custom={direction} mode="wait">
-            <motion.img
-                key={currentPhoto.asset_id ?? `${currentIndex}-${photoSrc}`}
-                src={photoSrc}
-                alt="Фотография"
-                className={styles.image}
-                custom={direction}
-                variants={variants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{
-                duration: 0.22,
-                ease: [0.22, 1, 0.36, 1],
-                }}
-                draggable={false}
-            />
-            </AnimatePresence>
+        <div ref={viewerRef} className={styles.viewer}>
+            <div className={styles.header}>
+                <div className={styles['close-button']}>
+                    <Button color="muted" variant="ghost" onClick={onClose} icon={<ArrowLeft/>} size="xl" />
+                </div>
+                <div className={styles['options-buttons']}>
+                    <Button color="muted" variant="ghost" onClick={() => setInfoDrawerOpen(true)} icon={<Info/>} size="xl" />
+                    <Button color="muted" variant="ghost" onClick={() => {}} icon={<Ellipsis/>} size="xl" />
+                </div>
+                <Drawer behavior='move' title="Информация" open={infoDrawerOpen} onClose={() => setInfoDrawerOpen(false)} side="right" portalTarget={viewerRef.current}>
+                    <h1>Options</h1>
+                </Drawer>
+            </div>
+            <div className={styles.stage}>
+                <AnimatePresence initial={false} custom={direction} mode="wait">
+                <motion.img
+                    key={currentPhoto.asset_id ?? `${currentIndex}-${photoSrc}`}
+                    src={photoSrc}
+                    alt="Фотография"
+                    className={styles.image}
+                    custom={direction}
+                    variants={variants}
+                    initial="enter"
+                    animate="center"
+                    exit="exit"
+                    transition={{
+                    duration: 0.22,
+                    ease: [0.22, 1, 0.36, 1],
+                    }}
+                    draggable={false}
+                />
+                </AnimatePresence>
 
-            <div className={styles['prev-button']}>
-            <Button
-                size="l"
-                color="muted"
-                variant="ghost"
-                onClick={handlePrevious}
-                icon={<ArrowLeft />}
-            />
+                <div className={styles['prev-button']}>
+                <Button
+                    size="xl"
+                    color="muted"
+                    variant="ghost"
+                    onClick={handlePrevious}
+                    icon={<ChevronLeft />}
+                />
+                </div>
+
+                <div className={styles['next-button']}>
+                <Button
+                    size="xl"
+                    color="muted"
+                    variant="ghost"
+                    onClick={handleNext}
+                    icon={<ChevronRight />}
+                />
+                </div>
             </div>
 
-            <div className={styles['next-button']}>
-            <Button
-                size="l"
-                color="muted"
-                variant="ghost"
-                onClick={handleNext}
-                icon={<ArrowRight />}
-            />
+            <div className={styles.footer}>
+                <PhotoCarousel
+                photos={photos}
+                currentIndex={currentIndex}
+                onSelect={handleSelect}
+                />
             </div>
-        </div>
-
-        <div className={styles.footer}>
-            <PhotoCarousel
-            photos={photos}
-            currentIndex={currentIndex}
-            onSelect={handleSelect}
-            />
-        </div>
         </div>
     );
 }

@@ -1,0 +1,93 @@
+/* ─── Overlay (только overlap) ─── */
+.drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--color-overlay);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 999;
+}
+
+.drawer-overlay-contained {
+    position: absolute;
+    z-index: 10;
+  }
+
+.drawer-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ─── Base drawer ─── */
+.drawer {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 100%;
+    background: var(--color-bg-primary);
+    box-shadow: 0 0 20px var(--color-shadow);
+    transition: transform 0.3s ease;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+@media (min-width: 600px) {
+    .drawer {
+        width: 360px;
+    }
+}
+
+/* ─── Sides ─── */
+.drawer-right {
+    right: 0;
+    transform: translateX(100%);
+}
+
+.drawer-right.open {
+    transform: translateX(0);
+}
+
+.drawer-left {
+    left: 0;
+    transform: translateX(-100%);
+}
+
+.drawer-left.open {
+    transform: translateX(0);
+}
+
+/* ─── Move mode: нет тени поверх контента ─── */
+.drawer-move {
+    box-shadow: none;
+    border-left: 1px solid var(--color-border);
+}
+
+.drawer-left.drawer-move {
+    border-left: none;
+    border-right: 1px solid var(--color-border);
+}
+
+/* ─── Header ─── */
+.drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--color-border);
+    padding: 8px;
+}
+
+.drawer-right .drawer-header {
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+}
+
+/* ─── Content ─── */
+.drawer-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}

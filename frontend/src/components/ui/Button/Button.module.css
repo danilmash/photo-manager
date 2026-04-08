@@ -74,6 +74,11 @@
     font-size: var(--font-size-lg);
 }
 
+.button.xl {
+    padding: 1em 1.6em;
+    font-size: var(--font-size-xl);
+}
+
 .icon {
     display: flex;
     align-items: center;
@@ -101,6 +106,10 @@
     padding: 0.65em 1.4em;
 }
 
+.button.xl:has(.icon) {
+    padding: 0.85em 1.8em;
+}
+
 .button.sm.onlyIcon {
     padding: 0.45em;
 }
@@ -113,3 +122,6 @@
     padding: 0.55em;
 }
 
+.button.xl.onlyIcon {
+    padding: 0.75em;
+}

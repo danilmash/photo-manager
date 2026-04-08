@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 interface ButtonProps {
     color: 'primary' | 'secondary' | 'muted';
     variant?: 'filled' | 'outline' | 'ghost';
-    size?: 'sm' | 'm' | 'l';
+    size?: 'sm' | 'm' | 'l' | 'xl';
     disabled?: boolean;
     to?: string;
     icon?: React.ReactNode;

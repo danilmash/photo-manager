@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Pencil } from 'lucide-react';
 import Button from '../ui/Button';
 import { getAsset, type AssetDetail } from '../../api/assets';
+import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 import styles from './AssetPhotoModal.module.css';
 
 const META_SECTIONS = ['exif', 'iptc', 'xmp', 'other'] as const;
@@ -145,14 +146,7 @@ export default function AssetPhotoModal({
     return () => document.removeEventListener('keydown', onKey);
   }, [assetId, onClose]);
 
-  useEffect(() => {
-    if (!assetId) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [assetId]);
+  useBodyScrollLock(!!assetId);
 
   if (!assetId) {
     return null;

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './Modal.module.css';
+import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 
 interface ModalProps {
     isOpen: boolean;
@@ -13,6 +14,8 @@ interface ModalProps {
 export default function Modal({ isOpen, onClose, children, variant = 'default', dark = false }: ModalProps) {
     const panelClass = variant === 'fullscreen' ? styles['panel-fullscreen'] : styles.panel;
     
+    useBodyScrollLock(isOpen);
+
     useEffect(() => {
         if (!isOpen) return;
 
@@ -22,12 +25,8 @@ export default function Modal({ isOpen, onClose, children, variant = 'default', 
 
         document.addEventListener('keydown', onKey);
 
-        const prev = document.body.style.overflow;
-        document.body.style.overflow = 'hidden';
-
         return () => {
         document.removeEventListener('keydown', onKey);
-        document.body.style.overflow = prev;
         };
     }, [isOpen, onClose]);
 

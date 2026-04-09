@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, ChevronRight, ChevronLeft, Ellipsis, Info } from 'lucide-react';
 
@@ -19,6 +19,22 @@ interface PhotoViewerProps {
 
 type Direction = 1 | -1;
 
+type ImageMetrics = {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    sourceWidth: number;
+    sourceHeight: number;
+};
+
+type ParsedBbox = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+};
+
 const variants = {
     enter: (direction: Direction) => ({
         x: direction > 0 ? 64 : -64,
@@ -37,6 +53,33 @@ const variants = {
     }),
 };
 
+function toFiniteNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+}
+
+function parseBbox(
+  bbox: unknown,
+): { x: number; y: number; width: number; height: number } | null {
+  if (!bbox || typeof bbox !== 'object') return null;
+
+  const record = bbox as Record<string, unknown>;
+
+  const x = Number(record.x);
+  const y = Number(record.y);
+  const width = Number(record.w);
+  const height = Number(record.h);
+   console.log(x,y,width,height) 
+  if (![x, y, width, height].every(Number.isFinite)) return null;
+  if (width <= 0 || height <= 0) return null;
+
+  return { x, y, width, height };
+}
+
 export default function PhotoViewer({
     photos,
     currentIndex,
@@ -50,9 +93,13 @@ export default function PhotoViewer({
     const [viewerById, setViewerById] = useState<Record<string, AssetViewer>>({});
     const [viewerLoading, setViewerLoading] = useState(false);
     const [viewerError, setViewerError] = useState<string | null>(null);
+    const [imageMetrics, setImageMetrics] = useState<ImageMetrics | null>(null);
+    const [imageSettled, setImageSettled] = useState(false);
 
     const prevIndexRef = useRef(currentIndex);
     const viewerRef = useRef<HTMLDivElement>(null);
+    const stageRef = useRef<HTMLDivElement>(null);
+    const imgRef = useRef<HTMLImageElement>(null);
 
     useEffect(() => {
         if (currentIndex > prevIndexRef.current) {
@@ -93,7 +140,12 @@ export default function PhotoViewer({
     const currentViewer = currentPhoto ? viewerById[currentPhoto.asset_id] ?? null : null;
 
     useEffect(() => {
-        if (!infoDrawerOpen || !currentPhoto?.asset_id) return;
+        setImageSettled(false);
+        setImageMetrics(null);
+    }, [currentPhoto?.asset_id, photoSrc]);
+
+    useEffect(() => {
+        if (!currentPhoto?.asset_id) return;
         if (viewerById[currentPhoto.asset_id]) return;
 
         let cancelled = false;
@@ -121,7 +173,87 @@ export default function PhotoViewer({
         return () => {
             cancelled = true;
         };
-    }, [infoDrawerOpen, currentPhoto?.asset_id, viewerById]);
+    }, [currentPhoto?.asset_id, viewerById]);
+
+    const updateImageMetrics = useCallback(() => {
+        const stage = stageRef.current;
+        const img = imgRef.current;
+
+        if (!stage || !img) return;
+
+        const stageRect = stage.getBoundingClientRect();
+        const imgRect = img.getBoundingClientRect();
+
+        if (imgRect.width <= 0 || imgRect.height <= 0) return;
+
+        const sourceWidth =
+            toFiniteNumber(currentViewer?.photo.width) ??
+            img.naturalWidth;
+
+        const sourceHeight =
+            toFiniteNumber(currentViewer?.photo.height) ??
+            img.naturalHeight;
+
+        if (!sourceWidth || !sourceHeight) return;
+
+        setImageMetrics({
+            left: imgRect.left - stageRect.left,
+            top: imgRect.top - stageRect.top,
+            width: imgRect.width,
+            height: imgRect.height,
+            sourceWidth,
+            sourceHeight,
+        });
+    }, [currentViewer?.photo.width, currentViewer?.photo.height]);
+
+    useEffect(() => {
+        const scheduleUpdate = () => {
+            requestAnimationFrame(() => {
+                updateImageMetrics();
+            });
+        };
+
+        scheduleUpdate();
+        window.addEventListener('resize', scheduleUpdate);
+
+        const resizeObserver =
+            typeof ResizeObserver !== 'undefined'
+                ? new ResizeObserver(scheduleUpdate)
+                : null;
+
+        if (stageRef.current) resizeObserver?.observe(stageRef.current);
+        if (imgRef.current) resizeObserver?.observe(imgRef.current);
+
+        return () => {
+            window.removeEventListener('resize', scheduleUpdate);
+            resizeObserver?.disconnect();
+        };
+    }, [updateImageMetrics, currentPhoto?.asset_id]);
+
+    const faceBoxes = useMemo(() => {
+        if (!currentViewer || !imageMetrics || !imageSettled) return [];
+        console.log(123)
+        const scaleX = imageMetrics.width / imageMetrics.sourceWidth;
+        const scaleY = imageMetrics.height / imageMetrics.sourceHeight;
+
+        return currentViewer.faces
+            .map((face) => {
+                const parsed = parseBbox(face.bbox);
+                console.log(parsed)
+                if (!parsed) return null;
+                console.log(face)
+                return {
+                    id: face.id,
+                    personName: face.person_name,
+                    confidence: face.confidence,
+                    left: imageMetrics.left + parsed.x * scaleX,
+                    top: imageMetrics.top + parsed.y * scaleY,
+                    width: parsed.width * scaleX,
+                    height: parsed.height * scaleY,
+                };
+            })
+            .filter((box): box is NonNullable<typeof box> => Boolean(box));
+    }, [currentViewer, imageMetrics, imageSettled]);
 
     const handlePrevious = () => {
         setDirection(-1);
@@ -237,9 +369,10 @@ export default function PhotoViewer({
                 </Drawer>
             </div>
 
-            <div className={styles.stage}>
+            <div ref={stageRef} className={styles.stage}>
                 <AnimatePresence initial={false} custom={direction} mode="wait">
                     <motion.img
+                        ref={imgRef}
                         key={currentPhoto.asset_id ?? `${currentIndex}-${photoSrc}`}
                         src={photoSrc}
                         alt="Фотография"
@@ -253,9 +386,41 @@ export default function PhotoViewer({
                             duration: 0.22,
                             ease: [0.22, 1, 0.36, 1],
                         }}
+                        onLoad={() => {
+                            requestAnimationFrame(() => {
+                                updateImageMetrics();
+                            });
+                        }}
+                        onAnimationComplete={() => {
+                            requestAnimationFrame(() => {
+                                updateImageMetrics();
+                                setImageSettled(true);
+                            });
+                        }}
                         draggable={false}
                     />
                 </AnimatePresence>
+
+                {faceBoxes.length > 0 && (
+                    <div className={styles.overlay} aria-hidden="true">
+                        {faceBoxes.map((box, index) => (
+                            <div
+                                key={box.id}
+                                className={styles['face-box']}
+                                style={{
+                                    left: box.left,
+                                    top: box.top,
+                                    width: box.width,
+                                    height: box.height,
+                                }}
+                            >
+                                <div className={styles['face-label']}>
+                                    {box.personName || `Лицо ${index + 1}`}
+                                </div>
+                            </div>
+                        ))} 
+                    </div>
+                )}
 
                 <div className={styles['prev-button']}>
                     <Button

@@ -128,10 +128,13 @@ class AssetPhotoInfoSchema(BaseModel):
 
 class AssetViewerFaceSchema(BaseModel):
     id: UUID
+    identity_id: UUID | None = None
     person_id: UUID | None = None
     person_name: str | None = None
     bbox: Any | None = None
     confidence: float | None = None
+    quality_score: float | None = None
+    is_reference: bool = False
 
 
 class AssetViewerResponseSchema(BaseModel):

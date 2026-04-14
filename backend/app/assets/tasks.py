@@ -71,24 +71,25 @@ def _generate_preview(img: Image, *, long_side: int, quality: int, dest: Path):
         copy.save(filename=str(dest))
 
 def _save_face_detections(db, asset_id: str, preview_path: Path):
-    """Отправляет превью в ml сервис и сохраняет найденные лица"""
+    """Отправляет превью в ml сервис и сохраняет найденные лица."""
     try:
         faces = detect_faces(str(preview_path))
     except Exception as e:
-        # ml сервис недоступен — не падаем, просто пропускаем
         print(f"[faces] ml сервис недоступен: {e}")
         return
 
     for face in faces:
-        # Пропускаем лица с низкой уверенностью
         if face["confidence"] < 0.7:
             continue
 
         db.add(FaceDetection(
             asset_id=asset_id,
+            face_index=face["face_index"],
             bbox=face["bbox"],
             embedding=face["embedding"],
             confidence=face["confidence"],
+            quality_score=face.get("quality_score"),
+            is_reference=False,
             created_at=datetime.datetime.now(),
         ))
 

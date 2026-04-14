@@ -26,7 +26,7 @@ from app.assets.schemas import (
     AssetMetadataSchema,
     AssetMetadataResponseSchema,
 )
-from app.faces.models import FaceDetection
+from app.faces.models import FaceDetection, FaceIdentity
 from app.assets.tasks import process_asset
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
@@ -350,22 +350,29 @@ def get_asset_viewer(
 
     detections = (
         db.query(FaceDetection)
-        .options(joinedload(FaceDetection.person))
+        .options(
+            joinedload(FaceDetection.identity)
+            .joinedload(FaceIdentity.person)
+        )
         .filter(FaceDetection.asset_id == asset_id)
         .order_by(FaceDetection.created_at.asc())
         .all()
     )
 
-    faces = [
-        AssetViewerFaceSchema(
-            id=detection.id,
-            person_id=detection.person_id,
-            person_name=detection.person.name if detection.person else None,
-            bbox=detection.bbox,
-            confidence=detection.confidence,
-        )
-        for detection in detections
-    ]
+    faces = []
+    for det in detections:
+        identity = det.identity
+        person = identity.person if identity else None
+        faces.append(AssetViewerFaceSchema(
+            id=det.id,
+            identity_id=identity.id if identity else None,
+            person_id=person.id if person else None,
+            person_name=person.name if person else None,
+            bbox=det.bbox,
+            confidence=det.confidence,
+            quality_score=det.quality_score,
+            is_reference=det.is_reference,
+        ))
 
     return AssetViewerResponseSchema(
         id=asset.id,

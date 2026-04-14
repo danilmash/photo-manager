@@ -22,6 +22,16 @@ class FaceIdentitySchema(BaseModel):
     person: PersonSchema | None = None
 
 
+class FaceCandidateSchema(BaseModel):
+    id: UUID
+    face_detection_id: UUID
+    identity_id: UUID
+    rank: int
+    score: float
+
+    identity: FaceIdentitySchema | None = None
+
+
 class FaceDetectionSchema(BaseModel):
     id: UUID
     asset_id: UUID
@@ -33,6 +43,11 @@ class FaceDetectionSchema(BaseModel):
     quality_score: float | None
     identity_score: float | None
     is_reference: bool
+    model_identity_id: UUID | None = None
+    model_identity_score: float | None = None
+    model_identity_margin: float | None = None
+    assignment_source: str | None = None
     created_at: datetime
 
     identity: FaceIdentitySchema | None = None
+    candidates: list[FaceCandidateSchema] = []

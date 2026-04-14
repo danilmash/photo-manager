@@ -98,13 +98,60 @@ class FaceDetection(Base):
 
     quality_score = Column(Float, nullable=True)
     identity_score = Column(Float, nullable=True)
-    
+
     is_reference = Column(Boolean, nullable=False, default=False)
 
-    created_at   = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+    # Model-predicted identity (written once by the matching pipeline)
+    model_identity_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("face_identities.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    model_identity_score = Column(Float, nullable=True)
+    model_identity_margin = Column(Float, nullable=True)
+
+    assignment_source = Column(String(16), nullable=True)
+
+    created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
 
     identity = relationship(
         "FaceIdentity",
         back_populates="detections",
         foreign_keys=[identity_id],
     )
+
+    model_identity = relationship(
+        "FaceIdentity",
+        foreign_keys=[model_identity_id],
+    )
+
+    candidates = relationship(
+        "FaceCandidate",
+        back_populates="detection",
+        order_by="FaceCandidate.rank",
+        cascade="all, delete-orphan",
+    )
+
+
+class FaceCandidate(Base):
+    __tablename__ = "face_candidates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    face_detection_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("face_detections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    identity_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("face_identities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    rank = Column(Integer, nullable=False)
+    score = Column(Float, nullable=False)
+
+    detection = relationship("FaceDetection", back_populates="candidates")
+    identity = relationship("FaceIdentity")

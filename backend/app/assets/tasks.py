@@ -71,6 +71,50 @@ def _generate_preview(img: Image, *, long_side: int, quality: int, dest: Path):
         dest.parent.mkdir(parents=True, exist_ok=True)
         copy.save(filename=str(dest))
 
+def _generate_face_crops(db, asset_id: str, preview_path: Path):
+    """Crop each detected face from the preview and save as a 256x256 JPEG."""
+    with Image(filename=str(preview_path)) as img:
+        w_img, h_img = img.width, img.height
+
+        detections = (
+            db.query(FaceDetection)
+            .filter_by(asset_id=asset_id)
+            .filter(FaceDetection.crop_path.is_(None))
+            .all()
+        )
+
+        for det in detections:
+            bbox = det.bbox
+            px_x = int(bbox["x"] * w_img)
+            px_y = int(bbox["y"] * h_img)
+            px_w = int(bbox["w"] * w_img)
+            px_h = int(bbox["h"] * h_img)
+
+            pad = int(max(px_w, px_h) * 0.2)
+            left = max(px_x - pad, 0)
+            top = max(px_y - pad, 0)
+            crop_w = min(px_x + px_w + pad, w_img) - left
+            crop_h = min(px_y + px_h + pad, h_img) - top
+
+            with img.clone() as crop:
+                crop.crop(left, top, width=crop_w, height=crop_h)
+
+                side = max(crop.width, crop.height)
+                crop.gravity = "center"
+                crop.extent(side, side)
+
+                crop.resize(256, 256)
+                crop.format = "jpeg"
+                crop.compression_quality = 90
+
+                rel_path = f"crops/{asset_id}/{det.id}.jpg"
+                dest = Path(settings.storage_root) / rel_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                crop.save(filename=str(dest))
+
+                det.crop_path = rel_path
+
+
 def _save_face_detections(db, asset_id: str, preview_path: Path):
     """Отправляет превью в ml сервис и сохраняет найденные лица."""
     try:
@@ -167,6 +211,7 @@ def process_asset(asset_id: str, file_id: str):
             if preview_path and preview_path.exists():
                 _save_face_detections(db, asset_id, preview_path)
                 db.flush()
+                _generate_face_crops(db, asset_id, preview_path)
                 match_detections_for_asset(db, asset_id)
 
             asset.status = "ready"

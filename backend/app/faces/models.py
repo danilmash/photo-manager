@@ -11,7 +11,7 @@ class Person(Base):
     __tablename__ = "persons"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(256), nullable=False)
+    name = Column(String(256), nullable=False, default="")
     cover_face_id = Column(UUID(as_uuid=True), ForeignKey("face_detections.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -111,6 +111,8 @@ class FaceDetection(Base):
     model_identity_margin = Column(Float, nullable=True)
 
     assignment_source = Column(String(16), nullable=True)
+
+    crop_path = Column(String(512), nullable=True)
 
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
 

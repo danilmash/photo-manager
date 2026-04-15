@@ -1,16 +1,20 @@
 import uuid as uuid_mod
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session, joinedload
+from fastapi.responses import FileResponse
+from sqlalchemy import select, func, distinct
+from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.users.dependencies import get_current_user
 from app.users.models import User
-from app.faces.models import FaceDetection, FaceIdentity
+from app.faces.models import FaceDetection, FaceIdentity, Person
 from app.faces.schemas import (
     AssignIdentityRequest,
     FaceAssignmentResponse,
-    FaceIdentitySchema,
+    PersonListItemSchema,
 )
 from app.faces.services import compute_identity_score, recalculate_centroid
 
@@ -120,33 +124,66 @@ def unassign_identity(
     )
 
 
-@router.get("/identities", response_model=list[FaceIdentitySchema])
-def list_identities(
+@router.get("/crops/{detection_id}")
+def get_face_crop(
+    detection_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    identities = (
-        db.query(FaceIdentity)
-        .options(joinedload(FaceIdentity.person))
-        .order_by(FaceIdentity.samples_count.desc())
+    det = _get_detection_or_404(db, detection_id)
+
+    if not det.crop_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Crop not available for this detection",
+        )
+
+    path = Path(settings.storage_root) / det.crop_path
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Crop file not found on disk",
+        )
+
+    return FileResponse(path, media_type="image/jpeg")
+
+
+def _build_crop_url(detection_id: uuid_mod.UUID | None) -> str | None:
+    if not detection_id:
+        return None
+    return f"/api/v1/faces/crops/{detection_id}"
+
+
+@router.get("/persons", response_model=list[PersonListItemSchema])
+def list_persons(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    photos_count_sq = (
+        select(func.count(distinct(FaceDetection.asset_id)))
+        .join(FaceIdentity, FaceDetection.identity_id == FaceIdentity.id)
+        .where(FaceIdentity.person_id == Person.id)
+        .correlate(Person)
+        .scalar_subquery()
+    )
+
+    rows = (
+        db.query(
+            Person.id,
+            Person.name,
+            Person.cover_face_id,
+            photos_count_sq.label("photos_count"),
+        )
+        .order_by(photos_count_sq.desc())
         .all()
     )
 
     return [
-        FaceIdentitySchema(
-            id=i.id,
-            person_id=i.person_id,
-            cover_face_id=i.cover_face_id,
-            samples_count=i.samples_count,
-            created_at=i.created_at,
-            updated_at=i.updated_at,
-            person=None if not i.person else {
-                "id": i.person.id,
-                "name": i.person.name,
-                "cover_face_id": i.person.cover_face_id,
-                "created_at": i.person.created_at,
-                "updated_at": i.person.updated_at,
-            },
+        PersonListItemSchema(
+            id=row.id,
+            name=row.name,
+            photos_count=row.photos_count or 0,
+            cover_url=_build_crop_url(row.cover_face_id),
         )
-        for i in identities
+        for row in rows
     ]

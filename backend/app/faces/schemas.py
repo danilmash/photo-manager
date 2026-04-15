@@ -11,6 +11,13 @@ class PersonSchema(BaseModel):
     updated_at: datetime
 
 
+class PersonListItemSchema(BaseModel):
+    id: UUID
+    name: str
+    photos_count: int
+    cover_url: str | None
+
+
 class FaceIdentitySchema(BaseModel):
     id: UUID
     person_id: UUID | None

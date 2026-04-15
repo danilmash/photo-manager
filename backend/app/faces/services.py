@@ -5,7 +5,7 @@ from uuid import UUID
 import numpy as np
 from sqlalchemy.orm import Session
 
-from app.faces.models import FaceCandidate, FaceDetection, FaceIdentity
+from app.faces.models import FaceCandidate, FaceDetection, FaceIdentity, Person
 
 MATCH_SCORE_THRESHOLD = 0.55
 MATCH_MARGIN_THRESHOLD = 0.10
@@ -121,14 +121,21 @@ def match_detection(db: Session, detection: FaceDetection) -> None:
 
 
 def _create_new_identity(db: Session, detection: FaceDetection) -> FaceIdentity:
-    """Bootstrap a new FaceIdentity from a single detection."""
+    """Bootstrap a new FaceIdentity from a single detection,
+    creating a placeholder Person automatically.
+    """
     emb = list(detection.embedding)
     arr = np.array(emb, dtype=np.float64)
     norm = np.linalg.norm(arr)
     if norm > 0:
         arr = arr / norm
 
+    person = Person(name="", cover_face_id=detection.id)
+    db.add(person)
+    db.flush()
+
     identity = FaceIdentity(
+        person_id=person.id,
         centroid_embedding=arr.tolist(),
         samples_count=1,
         cover_face_id=detection.id,

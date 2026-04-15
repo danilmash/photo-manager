@@ -32,6 +32,18 @@ class FaceCandidateSchema(BaseModel):
     identity: FaceIdentitySchema | None = None
 
 
+class AssignIdentityRequest(BaseModel):
+    identity_id: UUID
+
+
+class FaceAssignmentResponse(BaseModel):
+    detection_id: UUID
+    identity_id: UUID | None
+    identity_score: float | None
+    assignment_source: str | None
+    is_reference: bool
+
+
 class FaceDetectionSchema(BaseModel):
     id: UUID
     asset_id: UUID

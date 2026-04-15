@@ -28,13 +28,6 @@ type ImageMetrics = {
     sourceHeight: number;
 };
 
-type ParsedBbox = {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-};
-
 const variants = {
     enter: (direction: Direction) => ({
         x: direction > 0 ? 64 : -64,
@@ -73,7 +66,7 @@ function parseBbox(
   const y = Number(record.y);
   const width = Number(record.w);
   const height = Number(record.h);
-   console.log(x,y,width,height) 
+
   if (![x, y, width, height].every(Number.isFinite)) return null;
   if (width <= 0 || height <= 0) return null;
 
@@ -232,24 +225,20 @@ export default function PhotoViewer({
 
     const faceBoxes = useMemo(() => {
         if (!currentViewer || !imageMetrics || !imageSettled) return [];
-        console.log(123)
-        const scaleX = imageMetrics.width / imageMetrics.sourceWidth;
-        const scaleY = imageMetrics.height / imageMetrics.sourceHeight;
 
         return currentViewer.faces
             .map((face) => {
                 const parsed = parseBbox(face.bbox);
-                console.log(parsed)
                 if (!parsed) return null;
-                console.log(face)
+
                 return {
                     id: face.id,
                     personName: face.person_name,
                     confidence: face.confidence,
-                    left: imageMetrics.left + parsed.x * scaleX,
-                    top: imageMetrics.top + parsed.y * scaleY,
-                    width: parsed.width * scaleX,
-                    height: parsed.height * scaleY,
+                    left: imageMetrics.left + parsed.x * imageMetrics.width,
+                    top: imageMetrics.top + parsed.y * imageMetrics.height,
+                    width: parsed.width * imageMetrics.width,
+                    height: parsed.height * imageMetrics.height,
                 };
             })
             .filter((box): box is NonNullable<typeof box> => Boolean(box));

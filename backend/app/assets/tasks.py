@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 
 from app.faces.models import FaceDetection
+from app.faces.services import match_detections_for_asset
 from app.assets.ml_service import detect_faces
 from wand.image import Image
 
@@ -165,6 +166,8 @@ def process_asset(asset_id: str, file_id: str):
             # превью достаточно по качеству и намного меньше по размеру
             if preview_path and preview_path.exists():
                 _save_face_detections(db, asset_id, preview_path)
+                db.flush()
+                match_detections_for_asset(db, asset_id)
 
             asset.status = "ready"
             db.commit()

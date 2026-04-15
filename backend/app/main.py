@@ -4,6 +4,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.users.router import router as auth_router
 from app.assets.router import router as assets_router
+from app.faces.router import router as faces_router
 from app.users.models import User
 from app.users.security import hash_password
 
@@ -37,6 +38,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(assets_router)
+app.include_router(faces_router)
 
 
 @app.get("/")

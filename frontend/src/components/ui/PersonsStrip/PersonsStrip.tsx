@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { User } from 'lucide-react';
+import pageLayout from '../../../styles/page-layout.module.css';
 import styles from './PersonsStrip.module.css';
 import { listPersons, type PersonListItem } from '../../../api/persons';
 
@@ -44,9 +45,9 @@ export default function PersonsStrip() {
   }
 
   return (
-    <section className={styles.section} aria-label="Персоны">
-      <h2 className={styles.heading}>Люди</h2>
-      {error && <p className={styles.error}>{error}</p>}
+    <section className={pageLayout.section} aria-label="Персоны">
+      <h2 className={pageLayout['section-heading']}>Люди</h2>
+      {error && <p className={pageLayout['alert-inline']}>{error}</p>}
       <div className={styles.strip}>
         {isLoading &&
           Array.from({ length: 8 }).map((_, i) => (

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import pageLayout from '../../styles/page-layout.module.css';
 import styles from './HomePage.module.css';
 import { useAssetsFeedStore } from '../../stores/useAssetsFeedStore';
 import type { AssetListItem } from '../../api/assets';
@@ -46,14 +47,14 @@ export default function HomePage() {
   const tiles = useMemo(() => items, [items]);
 
   return (
-    <div className={styles.page}>
-      <section className={styles['page-intro']} aria-labelledby="home-page-title">
-        <div className={styles['page-intro-row']}>
+    <div className={pageLayout.page}>
+      <section className={pageLayout['page-intro']} aria-labelledby="home-page-title">
+        <div className={pageLayout['page-intro-row']}>
           <div>
-            <h1 id="home-page-title" className={styles.title}>
+            <h1 id="home-page-title" className={pageLayout.title}>
               Фото
             </h1>
-            <p className={styles.subtitle}>Общая библиотека</p>
+            <p className={pageLayout.subtitle}>Общая библиотека</p>
           </div>
           <Button color="primary" variant='filled' size='l' to='/import' icon={<Upload />} >
             Импорт
@@ -63,7 +64,7 @@ export default function HomePage() {
 
       <PersonsStrip />
 
-      {error && <div className={styles.error}>{error}</div>}
+      {error && <div className={pageLayout.alert}>{error}</div>}
 
       {showInitialLoading && (
         <div className={styles.grid} aria-busy="true">

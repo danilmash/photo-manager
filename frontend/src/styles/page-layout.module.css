@@ -1,0 +1,122 @@
+/* --- Оболочка страницы: на всю ширину (главная и т.п.) --- */
+
+.page {
+  box-sizing: border-box;
+  padding: 12px 0 0;
+  width: 100%;
+}
+
+@media (min-width: 480px) {
+  .page {
+    padding: 14px 16px 24px;
+  }
+}
+
+@media (min-width: 768px) {
+  .page {
+    padding: 16px 18px 28px;
+  }
+}
+
+/* --- Узкая колонка (импорт, формы) --- */
+
+.page-narrow {
+  box-sizing: border-box;
+  padding: 12px 12px 24px;
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+@media (min-width: 480px) {
+  .page-narrow {
+    padding: 16px 18px 28px;
+  }
+}
+
+/* --- Верх страницы: заголовок + действия (внутри .page) --- */
+
+.page-intro {
+  padding: 0 12px;
+}
+
+@media (min-width: 480px) {
+  .page-intro {
+    padding: 0;
+  }
+}
+
+.page-intro-row {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (min-width: 480px) {
+  .page-intro-row {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+}
+
+/* Заголовок внутри узкой страницы (горизонтальные отступы уже у .page-narrow) */
+
+.page-intro-narrow {
+  padding: 4px 2px 16px;
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+}
+
+.subtitle {
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.subtitle-relaxed {
+  margin-top: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+/* --- Секция контента на странице (лента, блоки) --- */
+
+.section {
+  margin-top: 8px;
+  padding: 0 12px;
+}
+
+@media (min-width: 480px) {
+  .section {
+    padding: 0;
+  }
+}
+
+.section-heading {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-wide);
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
+}
+
+/* --- Сообщения об ошибках --- */
+
+.alert {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-secondary);
+  color: var(--color-danger);
+}
+
+.alert-inline {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+}

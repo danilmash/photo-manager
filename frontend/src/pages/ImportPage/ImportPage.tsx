@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import pageLayout from '../../styles/page-layout.module.css';
 import styles from './ImportPage.module.css';
 import { useImportStore } from '../../stores/useImportStore';
 
@@ -56,12 +57,12 @@ export default function ImportPage() {
   };
 
   return (
-    <div className={styles.page}>
-      <section className={styles['page-intro']} aria-labelledby="import-page-title">
-        <h1 id="import-page-title" className={styles.title}>
+    <div className={pageLayout['page-narrow']}>
+      <section className={pageLayout['page-intro-narrow']} aria-labelledby="import-page-title">
+        <h1 id="import-page-title" className={pageLayout.title}>
           Импорт
         </h1>
-        <p className={styles.subtitle}>Перетащите фото сюда или выберите файлы</p>
+        <p className={pageLayout['subtitle-relaxed']}>Перетащите фото сюда или выберите файлы</p>
       </section>
 
       <button

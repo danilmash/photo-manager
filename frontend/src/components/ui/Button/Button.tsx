@@ -13,7 +13,7 @@ interface ButtonProps {
 }
 
 export default function Button({ to, color = 'primary', size = 'm', variant = 'filled', icon, onClick, children, disabled }: ButtonProps) {
-        const className = `${styles.button} ${styles[color]} ${styles[size]} ${styles[variant]} ${disabled ? styles.disabled : ''} ${icon && !children ? styles.onlyIcon : ''}`;
+        const className = `${styles.button} ${styles[color]} ${styles[size]} ${styles[variant]} ${disabled ? styles.disabled : ''} ${icon && !children ? styles['only-icon'] : ''}`;
     return (
         to ? (
             <Link to={to} className={className} onClick={onClick}>

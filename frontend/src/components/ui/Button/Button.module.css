@@ -89,7 +89,7 @@
     height: 1.3em;
 }
 
-.button.onlyIcon .icon svg {
+.button.only-icon .icon svg {
     width: 1.5em;
     height: 1.5em;
 }
@@ -110,18 +110,18 @@
     padding: 0.85em 1.8em;
 }
 
-.button.sm.onlyIcon {
+.button.sm.only-icon {
     padding: 0.45em;
 }
 
-.button.m.onlyIcon {
+.button.m.only-icon {
     padding: 0.50em;
 }
 
-.button.l.onlyIcon {
+.button.l.only-icon {
     padding: 0.55em;
 }
 
-.button.xl.onlyIcon {
+.button.xl.only-icon {
     padding: 0.75em;
 }

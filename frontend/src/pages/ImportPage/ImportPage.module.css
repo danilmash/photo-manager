@@ -4,7 +4,7 @@
   margin: 0 auto;
 }
 
-.header {
+.page-intro {
   padding: 4px 2px 16px;
 }
 
@@ -19,7 +19,7 @@
   line-height: var(--line-height-relaxed);
 }
 
-.hiddenInput {
+.hidden-input {
   position: absolute;
   width: 0;
   height: 0;
@@ -27,7 +27,7 @@
   pointer-events: none;
 }
 
-.dropZone {
+.drop-zone {
   width: 100%;
   min-height: 160px;
   padding: 24px 16px;
@@ -39,18 +39,18 @@
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.dropZone:hover,
-.dropZone:focus-visible {
+.drop-zone:hover,
+.drop-zone:focus-visible {
   border-color: var(--color-accent);
   background: var(--color-bg-tertiary);
 }
 
-.dropZoneActive {
+.drop-zone-active {
   border-color: var(--color-accent);
   background: var(--color-accent-muted);
 }
 
-.dropHint {
+.drop-hint {
   font-size: var(--font-size-md);
   color: var(--color-text-secondary);
 }
@@ -69,7 +69,7 @@
   background: var(--color-bg-secondary);
 }
 
-.rowTop {
+.row-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -77,7 +77,7 @@
   margin-bottom: 8px;
 }
 
-.fileName {
+.file-name {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   word-break: break-word;
@@ -91,14 +91,14 @@
   color: var(--color-text-secondary);
 }
 
-.barTrack {
+.bar-track {
   height: 6px;
   border-radius: 999px;
   background: var(--color-bg-tertiary);
   overflow: hidden;
 }
 
-.barFill {
+.bar-fill {
   height: 100%;
   border-radius: 999px;
   background: var(--color-accent);
@@ -117,7 +117,7 @@
     padding: 16px 18px 28px;
   }
 
-  .dropZone {
+  .drop-zone {
     min-height: 200px;
     padding: 32px 20px;
   }

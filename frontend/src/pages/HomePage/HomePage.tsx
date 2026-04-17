@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button';
 import { Upload } from 'lucide-react';
 import Modal from '../../components/ui/Modal';
 import PhotoViewer from '../../components/ui/PhotoViewer';
+import PersonsStrip from '../../components/ui/PersonsStrip';
 
 function statusLabel(status: string) {
   if (status === 'importing') return 'Импорт...';
@@ -14,7 +15,7 @@ function statusLabel(status: string) {
 }
 
 export default function HomePage() {
-  const { items, isLoading, error, nextCursor, loadInitial, loadMore } = useAssetsFeedStore();
+  const { items, isLoading, error, loadInitial, loadMore } = useAssetsFeedStore();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<AssetListItem | null>(null);
 
@@ -46,17 +47,21 @@ export default function HomePage() {
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <div className={styles.headerRow}>
+      <section className={styles['page-intro']} aria-labelledby="home-page-title">
+        <div className={styles['page-intro-row']}>
           <div>
-            <h1 className={styles.title}>Фото</h1>
+            <h1 id="home-page-title" className={styles.title}>
+              Фото
+            </h1>
             <p className={styles.subtitle}>Общая библиотека</p>
           </div>
           <Button color="primary" variant='filled' size='l' to='/import' icon={<Upload />} >
             Импорт
           </Button>
         </div>
-      </header>
+      </section>
+
+      <PersonsStrip />
 
       {error && <div className={styles.error}>{error}</div>}
 
@@ -78,7 +83,7 @@ export default function HomePage() {
               <button
                 key={item.asset_id}
                 type="button"
-                className={styles.tileBtn}
+                className={styles['tile-btn']}
                 disabled={!isReady}
                 onClick={() => setSelectedAsset(item)}
                 aria-label={item.title ? `Открыть: ${item.title}` : 'Открыть фото'}

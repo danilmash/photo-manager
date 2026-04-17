@@ -15,17 +15,17 @@ export default function Header() {
   const { theme, toggleTheme } = useThemeStore();
 
   return (
-    <header className={styles.header}>
-      <div className={styles.topBar}>
+    <header className={styles.header} aria-label="Навигация приложения">
+      <div className={styles['top-bar']}>
         <span className={styles.logo}>Photo Manager</span>
-        <nav className={styles.desktopNav}>
+        <nav className={styles['desktop-nav']}>
           {navItems.map(({ to, label }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `${styles.desktopLink} ${isActive ? styles.active : ''}`
+                `${styles['desktop-link']} ${isActive ? styles.active : ''}`
               }
             >
               {label}
@@ -34,7 +34,7 @@ export default function Header() {
         </nav>
 
         <button
-          className={styles.themeToggle}
+          className={styles['theme-toggle']}
           onClick={toggleTheme}
           aria-label="Переключить тему"
         >
@@ -42,14 +42,14 @@ export default function Header() {
         </button>
       </div>
 
-      <nav className={styles.bottomNav}>
+      <nav className={styles['bottom-nav']}>
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
             className={({ isActive }) =>
-              `${styles.bottomLink} ${isActive ? styles.active : ''}`
+              `${styles['bottom-link']} ${isActive ? styles.active : ''}`
             }
           >
             <Icon size={22} strokeWidth={1.8} />

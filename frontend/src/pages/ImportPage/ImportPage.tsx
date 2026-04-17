@@ -57,14 +57,16 @@ export default function ImportPage() {
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <h1 className={styles.title}>Импорт</h1>
+      <section className={styles['page-intro']} aria-labelledby="import-page-title">
+        <h1 id="import-page-title" className={styles.title}>
+          Импорт
+        </h1>
         <p className={styles.subtitle}>Перетащите фото сюда или выберите файлы</p>
-      </header>
+      </section>
 
       <button
         type="button"
-        className={`${styles.dropZone} ${dragActive ? styles.dropZoneActive : ''}`}
+        className={`${styles['drop-zone']} ${dragActive ? styles['drop-zone-active'] : ''}`}
         onClick={() => inputRef.current?.click()}
         onDrop={onDrop}
         onDragOver={onDragOver}
@@ -76,26 +78,26 @@ export default function ImportPage() {
           type="file"
           accept="image/*"
           multiple
-          className={styles.hiddenInput}
+          className={styles['hidden-input']}
           onChange={(e) => {
             handleFiles(e.target.files);
             e.target.value = '';
           }}
         />
-        <span className={styles.dropHint}>Нажмите или перетащите файлы</span>
+        <span className={styles['drop-hint']}>Нажмите или перетащите файлы</span>
       </button>
 
       {rows.length > 0 && (
         <ul className={styles.list}>
           {rows.map((row) => (
             <li key={row.id} className={styles.row}>
-              <div className={styles.rowTop}>
-                <span className={styles.fileName}>{row.fileName}</span>
+              <div className={styles['row-top']}>
+                <span className={styles['file-name']}>{row.fileName}</span>
                 <span className={styles.status}>{phaseLabel(row.phase, row.message)}</span>
               </div>
-              <div className={styles.barTrack}>
+              <div className={styles['bar-track']}>
                 <div
-                  className={styles.barFill}
+                  className={styles['bar-fill']}
                   style={{
                     width: `${row.phase === 'uploading' ? row.progress : 100}%`,
                   }}

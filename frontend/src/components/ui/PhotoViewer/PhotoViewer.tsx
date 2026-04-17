@@ -268,7 +268,7 @@ export default function PhotoViewer({
 
     return (
         <div ref={viewerRef} className={styles.viewer}>
-            <div className={styles.header}>
+            <div className={styles['viewer-toolbar']}>
                 <div className={styles['close-button']}>
                     <Button color="muted" variant="ghost" onClick={onClose} icon={<ArrowLeft />} size="xl" />
                 </div>

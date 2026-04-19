@@ -32,10 +32,20 @@ class Asset(Base):
     title      = Column(String(512), nullable=True)
     status     = Column(String(32), nullable=False, default="importing")
     owner_id   = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Партия импорта, в рамках которой загружен ассет. NULL допустим только
+    # для исторических данных, созданных до появления import_batches.
+    import_batch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("import_batches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     owner    = relationship("User", backref="assets")
+    import_batch = relationship("ImportBatch", back_populates="assets")
     files    = relationship("File", back_populates="asset", cascade="all, delete-orphan")
     versions = relationship(
         "AssetVersion", back_populates="asset",

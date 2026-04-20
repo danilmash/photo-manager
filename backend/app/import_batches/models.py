@@ -11,6 +11,7 @@ from app.database import Base
 # Возможные значения ImportBatch.status. Храним строкой (как Asset.status),
 # чтобы не вводить enum в БД и легко добавлять статусы в будущем.
 IMPORT_BATCH_STATUS_UPLOADING = "uploading"
+IMPORT_BATCH_STATUS_PROCESSING = "processing"
 IMPORT_BATCH_STATUS_PENDING_REVIEW = "pending_review"
 IMPORT_BATCH_STATUS_ACCEPTED = "accepted"
 IMPORT_BATCH_STATUS_REJECTED = "rejected"

@@ -2,16 +2,30 @@ import datetime
 import uuid
 from pathlib import Path
 
-from app.faces.models import FaceDetection
-from app.faces.services import match_detections_for_asset
-from app.assets.ml_service import detect_faces
+from sqlalchemy import func
 from wand.image import Image
 
+from app.assets.ml_service import detect_faces
+from app.assets.models import (
+    ASSET_STATUS_ERROR,
+    ASSET_STATUS_PREVIEW_READY,
+    ASSET_STATUS_PROCESSING,
+    ASSET_STATUS_READY,
+    Asset,
+    AssetVersion,
+    File,
+)
 from app.celery_app import celery
 from app.config import settings
 from app.database import SessionLocal
-import app.users.models
-from app.assets.models import Asset, File, AssetVersion
+from app.faces.models import FaceDetection
+from app.faces.services import match_detections_for_asset
+from app.import_batches.models import (
+    IMPORT_BATCH_STATUS_PENDING_REVIEW,
+    IMPORT_BATCH_STATUS_PROCESSING,
+    ImportBatch,
+)
+import app.users.models  # noqa: F401 — регистрация модели для relationships
 
 PREVIEW_SPECS = [
     {"purpose": "thumbnail", "long_side": 300,  "quality": 80, "subdir": "thumbnails"},
@@ -70,6 +84,7 @@ def _generate_preview(img: Image, *, long_side: int, quality: int, dest: Path):
         copy.compression_quality = quality
         dest.parent.mkdir(parents=True, exist_ok=True)
         copy.save(filename=str(dest))
+
 
 def _generate_face_crops(db, asset_id: str, preview_path: Path):
     """Crop each detected face from the preview and save as a 256x256 JPEG."""
@@ -138,8 +153,39 @@ def _save_face_detections(db, asset_id: str, preview_path: Path):
             created_at=datetime.datetime.now(),
         ))
 
-@celery.task(name="app.assets.tasks.process_asset")
-def process_asset(asset_id: str, file_id: str):
+
+def _finalize_batch_if_done(db, batch_id) -> None:
+    """Переводит партию в pending_review, когда все её ассеты в ready/error.
+
+    Вызывается в finally у process_asset_ml. Операция идемпотентна:
+    если партия уже не в статусе `processing`, ничего не делает.
+    """
+    if batch_id is None:
+        return
+
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch or batch.status != IMPORT_BATCH_STATUS_PROCESSING:
+        return
+
+    remaining = (
+        db.query(func.count(Asset.id))
+        .filter(Asset.import_batch_id == batch_id)
+        .filter(Asset.status.notin_([ASSET_STATUS_READY, ASSET_STATUS_ERROR]))
+        .scalar()
+        or 0
+    )
+    if remaining == 0:
+        batch.status = IMPORT_BATCH_STATUS_PENDING_REVIEW
+        db.add(batch)
+        db.commit()
+
+
+@celery.task(name="app.assets.tasks.process_asset_preview")
+def process_asset_preview(asset_id: str, file_id: str):
+    """Фаза 1 — дешёвая: метаданные, thumbnail, preview.
+
+    В конце переводит ассет в preview_ready. ML не запускается.
+    """
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter_by(id=asset_id).first()
@@ -150,7 +196,6 @@ def process_asset(asset_id: str, file_id: str):
 
         file_path = Path(settings.storage_root) / file_record.path
         storage = Path(settings.storage_root)
-        preview_path = None  # путь к превью для ml
 
         try:
             with Image(filename=str(file_path)) as img:
@@ -189,10 +234,6 @@ def process_asset(asset_id: str, file_id: str):
                         purpose=spec["purpose"],
                     ))
 
-                    # Запоминаем путь к большому превью для ml
-                    if spec["purpose"] == "preview":
-                        preview_path = dest
-
             version = AssetVersion(
                 asset_id=asset_id,
                 version_number=1,
@@ -204,24 +245,73 @@ def process_asset(asset_id: str, file_id: str):
                 keywords=[],
             )
             db.add(version)
-            db.flush()
 
-            # Детекция лиц — используем превью а не оригинал
-            # превью достаточно по качеству и намного меньше по размеру
-            if preview_path and preview_path.exists():
-                _save_face_detections(db, asset_id, preview_path)
-                db.flush()
-                _generate_face_crops(db, asset_id, preview_path)
-                match_detections_for_asset(db, asset_id)
-
-            asset.status = "ready"
+            asset.status = ASSET_STATUS_PREVIEW_READY
             db.commit()
         except Exception:
             db.rollback()
             asset = db.query(Asset).filter_by(id=asset_id).first()
             if asset:
-                asset.status = "error"
+                asset.status = ASSET_STATUS_ERROR
                 db.commit()
             raise
     finally:
         db.close()
+
+
+@celery.task(name="app.assets.tasks.process_asset_ml")
+def process_asset_ml(asset_id: str):
+    """Фаза 2 — дорогая: детекция лиц, кропы, матчинг identity.
+
+    В конце переводит ассет в ready/error и при необходимости финализирует
+    партию импорта (переводит её в pending_review, когда обработаны все).
+    """
+    db = SessionLocal()
+    batch_id = None
+    try:
+        asset = db.query(Asset).filter_by(id=asset_id).first()
+        if not asset:
+            return
+
+        batch_id = asset.import_batch_id
+
+        preview_file = (
+            db.query(File)
+            .filter_by(asset_id=asset_id, purpose="preview")
+            .order_by(File.created_at.desc())
+            .first()
+        )
+        if not preview_file:
+            asset.status = ASSET_STATUS_ERROR
+            db.commit()
+            return
+
+        preview_path = Path(settings.storage_root) / preview_file.path
+        if not preview_path.exists():
+            asset.status = ASSET_STATUS_ERROR
+            db.commit()
+            return
+
+        asset.status = ASSET_STATUS_PROCESSING
+        db.commit()
+
+        try:
+            _save_face_detections(db, asset_id, preview_path)
+            db.flush()
+            _generate_face_crops(db, asset_id, preview_path)
+            match_detections_for_asset(db, asset_id)
+
+            asset.status = ASSET_STATUS_READY
+            db.commit()
+        except Exception:
+            db.rollback()
+            asset = db.query(Asset).filter_by(id=asset_id).first()
+            if asset:
+                asset.status = ASSET_STATUS_ERROR
+                db.commit()
+            raise
+    finally:
+        try:
+            _finalize_batch_if_done(db, batch_id)
+        finally:
+            db.close()

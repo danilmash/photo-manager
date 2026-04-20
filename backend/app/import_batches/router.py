@@ -4,10 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.assets.models import Asset
+from app.assets.models import (
+    ASSET_STATUS_PREVIEW_READY,
+    ASSET_STATUS_QUEUED_PREVIEW,
+    Asset,
+)
+from app.assets.tasks import process_asset_ml
 from app.database import get_db
 from app.import_batches.models import (
-    IMPORT_BATCH_STATUS_PENDING_REVIEW,
+    IMPORT_BATCH_STATUS_PROCESSING,
     IMPORT_BATCH_STATUS_UPLOADING,
     ImportBatch,
 )
@@ -144,16 +149,46 @@ def close_import_batch(
             ),
         )
 
-    batch.status = IMPORT_BATCH_STATUS_PENDING_REVIEW
-    db.commit()
-    db.refresh(batch)
-
     assets_count = (
         db.query(func.count(Asset.id))
         .filter(Asset.import_batch_id == batch.id)
         .scalar()
         or 0
     )
+    if assets_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя закрыть пустую партию",
+        )
+
+    queued_count = (
+        db.query(func.count(Asset.id))
+        .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.status == ASSET_STATUS_QUEUED_PREVIEW)
+        .scalar()
+        or 0
+    )
+    if queued_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Есть ассеты без готовых превью, дождитесь загрузки",
+        )
+
+    ready_asset_ids = [
+        row[0]
+        for row in db.query(Asset.id)
+        .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.status == ASSET_STATUS_PREVIEW_READY)
+        .all()
+    ]
+
+    batch.status = IMPORT_BATCH_STATUS_PROCESSING
+    db.commit()
+    db.refresh(batch)
+
+    for aid in ready_asset_ids:
+        process_asset_ml.delay(str(aid))
+
     return _to_schema(batch, assets_count)
 
 

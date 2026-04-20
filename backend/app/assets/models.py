@@ -8,6 +8,15 @@ from app.database import Base
 import uuid
 
 
+# Возможные значения Asset.status. Храним строкой, чтобы легко расширять
+# набор без миграций БД.
+ASSET_STATUS_QUEUED_PREVIEW = "queued_preview"
+ASSET_STATUS_PREVIEW_READY = "preview_ready"
+ASSET_STATUS_PROCESSING = "processing"
+ASSET_STATUS_READY = "ready"
+ASSET_STATUS_ERROR = "error"
+
+
 class File(Base):
     __tablename__ = "files"
 
@@ -30,7 +39,7 @@ class Asset(Base):
 
     id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title      = Column(String(512), nullable=True)
-    status     = Column(String(32), nullable=False, default="importing")
+    status     = Column(String(32), nullable=False, default=ASSET_STATUS_QUEUED_PREVIEW)
     owner_id   = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     # Партия импорта, в рамках которой загружен ассет. NULL допустим только

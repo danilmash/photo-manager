@@ -14,7 +14,12 @@ from app.database import get_db
 from app.users.dependencies import get_current_user
 from app.users.models import User
 from app.config import settings
-from app.assets.models import Asset, AssetVersion, File as AssetFileModel
+from app.assets.models import (
+    ASSET_STATUS_QUEUED_PREVIEW,
+    Asset,
+    AssetVersion,
+    File as AssetFileModel,
+)
 from app.assets.schemas import (
     UploadResponseSchema,
     AssetStatusSchema,
@@ -31,7 +36,7 @@ from app.import_batches.models import (
     IMPORT_BATCH_STATUS_UPLOADING,
     ImportBatch,
 )
-from app.assets.tasks import process_asset
+from app.assets.tasks import process_asset_preview
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
@@ -219,7 +224,7 @@ def upload_asset(
     asset = Asset(
         id=asset_id,
         title=filename,
-        status="importing",
+        status=ASSET_STATUS_QUEUED_PREVIEW,
         owner_id=current_user.id,
         import_batch_id=batch.id if batch else None,
     )
@@ -236,13 +241,13 @@ def upload_asset(
     db.add(file_record)
     db.commit()
 
-    task = process_asset.delay(str(asset_id), str(file_id))
+    task = process_asset_preview.delay(str(asset_id), str(file_id))
 
     return UploadResponseSchema(
         asset_id=asset_id,
         job_id=task.id,
         filename=filename,
-        status="importing",
+        status=ASSET_STATUS_QUEUED_PREVIEW,
     )
 
 

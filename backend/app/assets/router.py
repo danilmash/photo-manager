@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, UploadFile, HTTPException, status
+from fastapi import APIRouter, Depends, Form, UploadFile, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select
@@ -27,6 +27,10 @@ from app.assets.schemas import (
     AssetMetadataResponseSchema,
 )
 from app.faces.models import FaceDetection, FaceIdentity
+from app.import_batches.models import (
+    IMPORT_BATCH_STATUS_UPLOADING,
+    ImportBatch,
+)
 from app.assets.tasks import process_asset
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
@@ -170,6 +174,7 @@ def _build_photo_info(
 @router.post("/upload", response_model=UploadResponseSchema)
 def upload_asset(
     file: UploadFile,
+    batch_id: uuid_mod.UUID | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -179,6 +184,23 @@ def upload_asset(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=f"Неподдерживаемый формат: {content_type}",
         )
+
+    batch: ImportBatch | None = None
+    if batch_id is not None:
+        batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+        if not batch:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Партия импорта не найдена",
+            )
+        if batch.status != IMPORT_BATCH_STATUS_UPLOADING:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "В партию импорта нельзя добавлять файлы "
+                    f"в статусе '{batch.status}'"
+                ),
+            )
 
     asset_id = uuid_mod.uuid4()
     file_id = uuid_mod.uuid4()
@@ -199,6 +221,7 @@ def upload_asset(
         title=filename,
         status="importing",
         owner_id=current_user.id,
+        import_batch_id=batch.id if batch else None,
     )
     file_record = AssetFileModel(
         id=file_id,
@@ -227,6 +250,7 @@ def upload_asset(
 def list_assets(
     limit: int = 50,
     cursor: str | None = None,
+    batch_id: uuid_mod.UUID | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -256,18 +280,21 @@ def list_assets(
         .scalar_subquery()
     )
 
-    q = (
-        db.query(
-            Asset.id.label("asset_id"),
-            Asset.title,
-            Asset.status,
-            Asset.created_at,
-            thumb_id_sq.label("thumb_id"),
-            preview_id_sq.label("preview_id"),
-        )
-        .filter(Asset.status.notin_(["error"]))
-        .order_by(Asset.created_at.desc(), Asset.id.desc())
-    )
+    q = db.query(
+        Asset.id.label("asset_id"),
+        Asset.title,
+        Asset.status,
+        Asset.created_at,
+        thumb_id_sq.label("thumb_id"),
+        preview_id_sq.label("preview_id"),
+    ).order_by(Asset.created_at.desc(), Asset.id.desc())
+
+    if batch_id is not None:
+        # Внутри партии показываем всё, включая импортируемые и ошибки:
+        # это контент ревью, пользователю важно увидеть любые проблемы.
+        q = q.filter(Asset.import_batch_id == batch_id)
+    else:
+        q = q.filter(Asset.status.notin_(["error"]))
 
     if cursor:
         try:

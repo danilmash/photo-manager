@@ -9,7 +9,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 1.5rem;
-  height: 3rem;
+  height: var(--app-header-height);
   background-color: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);
 }
@@ -86,7 +86,7 @@
     display: flex;
     align-items: center;
     justify-content: space-around;
-    height: 3.5rem;
+    height: var(--app-mobile-nav-height);
     background-color: var(--color-bg-secondary);
     border-top: 1px solid var(--color-border);
   }

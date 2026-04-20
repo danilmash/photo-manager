@@ -1,0 +1,147 @@
+/* ─── Layout tokens (local) ─── */
+/*
+  Ширина панели на desktop и мобильная ширина вынесены в переменные,
+  чтобы в одном месте менять и размеры, и позицию toggle-кнопки.
+*/
+.panel {
+  --sidebar-width: 280px;
+  --toggle-size: 28px;
+  /*
+    Отступ сверху, чтобы не перекрывать фиксированный хедер приложения.
+    Значение читается из глобального токена и может быть переопределено
+    конкретным приложением. Если токен не задан — fallback 0.
+  */
+  --sidebar-top: var(--app-header-height, 0px);
+
+  position: fixed;
+  top: var(--sidebar-top);
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-width);
+  max-width: 100%;
+
+  display: flex;
+  flex-direction: column;
+
+  background: var(--color-bg-primary);
+  border-right: 1px solid var(--color-border);
+  box-shadow: 0 0 20px var(--color-shadow, rgba(0, 0, 0, 0.25));
+
+  transform: translateX(0);
+  transition: transform 0.3s ease;
+  z-index: 1000;
+}
+
+.panel.collapsed {
+  transform: translateX(-100%);
+}
+
+/* ─── Header ─── */
+.header {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+/* ─── Body ─── */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+/* ─── Toggle button ─── */
+.toggle {
+  position: fixed;
+  /*
+    Центрируем кнопку по видимой области панели (ниже хедера), а не по всему
+    viewport. Если глобальный токен хедера не задан — получаем обычные 50%.
+  */
+  top: calc(50% + var(--app-header-height, 0px) / 2);
+  left: 280px; /* = sidebar width; см. .panel */
+  width: 28px;
+  height: 28px;
+  padding: 0;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  box-shadow: 0 2px 8px var(--color-shadow, rgba(0, 0, 0, 0.2));
+
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  transition:
+    left 0.3s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+  z-index: 1001;
+}
+
+.toggle:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.toggle.collapsed {
+  left: 22px;
+}
+
+/* ─── Backdrop (mobile only) ─── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 999;
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 768px) {
+  .panel {
+    --sidebar-width: min(320px, 86vw);
+    /* На мобайле хедер скрыт (см. Header.module.css), drawer идёт во всю высоту. */
+    --sidebar-top: 0px;
+    width: var(--sidebar-width);
+  }
+
+  .toggle {
+    display: none;
+  }
+
+  .backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (min-width: 769px) {
+  /* На десктопе backdrop не нужен ни в каком состоянии. */
+  .backdrop {
+    display: none;
+  }
+}

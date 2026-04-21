@@ -26,6 +26,18 @@ function statusLabel(status: string) {
   }
 }
 
+/** Миниатюра уже есть после фазы preview; общий status может быть processing (ML). */
+function canShowLibraryThumb(item: AssetListItem): boolean {
+  return item.preview_status === 'completed' && !!item.thumbnail_url;
+}
+
+function tileBadgeLabel(item: AssetListItem, statusText: string): string {
+  if (item.faces_status === 'processing' && item.preview_status === 'completed') {
+    return 'Лица…';
+  }
+  return statusText;
+}
+
 export default function HomePage() {
   const { items, isLoading, error, loadInitial, loadMore } = useAssetsFeedStore();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -90,28 +102,38 @@ export default function HomePage() {
       {hasItems && (
         <div className={styles.grid}>
           {tiles.map((item) => {
-            const isReady = item.status === 'ready' && !!item.thumbnail_url;
+            const showThumb = canShowLibraryThumb(item);
+            // Превью уже в библиотеке — можно открыть просмотр, пока идёт ML.
+            const canOpen = showThumb;
+            const statusText = statusLabel(item.status);
             return (
               <button
                 key={item.asset_id}
                 type="button"
                 className={styles['tile-btn']}
-                disabled={!isReady}
+                disabled={!canOpen}
                 onClick={() => setSelectedAsset(item)}
                 aria-label={item.title ? `Открыть: ${item.title}` : 'Открыть фото'}
               >
                 <div className={styles.tile}>
-                  {isReady ? (
-                    <img
-                      className={styles.img}
-                      src={item.thumbnail_url!}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                    />
+                  {showThumb ? (
+                    <>
+                      <img
+                        className={styles.img}
+                        src={item.thumbnail_url!}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      {item.status !== 'ready' && (
+                        <span className={styles.badge}>
+                          {tileBadgeLabel(item, statusText)}
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <div className={styles.skeleton}>
-                      <span className={styles.badge}>{statusLabel(item.status)}</span>
+                      <span className={styles.badge}>{statusText}</span>
                     </div>
                   )}
                 </div>

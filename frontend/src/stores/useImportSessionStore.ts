@@ -104,7 +104,9 @@ const FINAL_ASSET_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 function hasNonFinalAsset(assets: AssetListItem[] | undefined): boolean {
-  if (!assets) return false;
+  // Пустой список не значит «все ассеты в финале»: партия только создана,
+  // файлы ещё грузятся или ответ API ещё не пришёл — поллинг должен жить.
+  if (!assets || assets.length === 0) return true;
   return assets.some((a) => !FINAL_ASSET_STATUSES.has(a.status));
 }
 
@@ -207,6 +209,9 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
 
   startUploads: (batchId, files) => {
     if (files.length === 0) return;
+
+    // Поллинг мог быть остановлен для пустой открытой партии — снова включаем.
+    get().startBatchPolling(batchId);
 
     const rows: UploadRow[] = files.map((f) => ({
       id: makeId(),
@@ -332,10 +337,21 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
 
         const state = get();
         const assets = state.assetsByBatch[batchId];
-        const allFinal = !hasNonFinalAsset(assets);
+        const uploads = state.uploadsByBatch[batchId] ?? [];
+        const uploadsInFlight = uploads.some((u) => u.phase === 'uploading');
+        const allFinal =
+          !hasNonFinalAsset(assets) && (assets?.length ?? 0) > 0;
         const batchFinal = batch.status !== 'processing';
 
-        if (allFinal && batchFinal) {
+        const idleEmptyUploading =
+          batch.status === 'uploading' &&
+          (batch.assets_count ?? 0) === 0 &&
+          !uploadsInFlight &&
+          (assets?.length ?? 0) === 0;
+
+        if (idleEmptyUploading) {
+          get().stopBatchPolling();
+        } else if (!uploadsInFlight && allFinal && batchFinal) {
           get().stopBatchPolling();
         }
 

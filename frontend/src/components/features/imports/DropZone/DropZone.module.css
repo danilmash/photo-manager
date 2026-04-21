@@ -1,0 +1,54 @@
+.hidden-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.drop-zone {
+  width: 100%;
+  min-height: 140px;
+  padding: 20px 16px;
+  border: 2px dashed var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  cursor: pointer;
+}
+
+.drop-zone:hover,
+.drop-zone:focus-visible {
+  border-color: var(--color-accent);
+  background: var(--color-bg-tertiary);
+}
+
+.drop-zone-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-muted);
+}
+
+.drop-zone-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.drop-zone-disabled:hover,
+.drop-zone-disabled:focus-visible {
+  border-color: var(--color-border);
+  background: var(--color-bg-secondary);
+}
+
+.drop-hint {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+
+@media (min-width: 480px) {
+  .drop-zone {
+    min-height: 180px;
+    padding: 28px 20px;
+  }
+}

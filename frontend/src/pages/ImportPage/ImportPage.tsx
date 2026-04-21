@@ -1,114 +1,306 @@
-import { useCallback, useRef, useState } from 'react';
-import pageLayout from '../../styles/page-layout.module.css';
-import styles from './ImportPage.module.css';
-import { useImportStore } from '../../stores/useImportStore';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { CheckCircle2, Menu } from 'lucide-react';
 
-function phaseLabel(phase: 'uploading' | 'processing' | 'ready' | 'error', message?: string) {
-  if (message) return message;
-  switch (phase) {
-    case 'uploading':
-      return 'Загрузка…';
-    case 'processing':
-      return 'Обработка…';
-    case 'ready':
-      return 'Готово';
-    case 'error':
-      return 'Ошибка';
-    default:
-      return phase;
-  }
+import BatchAssetsGrid from '../../components/features/imports/BatchAssetsGrid';
+import DropZone from '../../components/features/imports/DropZone';
+import ImportsSidebar from '../../components/features/imports/ImportsSidebar';
+import UploadProgressDrawer from '../../components/features/imports/UploadProgressDrawer';
+import pageLayout from '../../styles/page-layout.module.css';
+import { useImportSessionStore } from '../../stores/useImportSessionStore';
+
+import styles from './ImportPage.module.css';
+
+const DESKTOP_MEDIA_QUERY = '(min-width: 769px)';
+
+const STATUS_LABEL: Record<string, string> = {
+  uploading: 'Загрузка',
+  processing: 'ML-обработка',
+  pending_review: 'Ожидает ревью',
+  accepted: 'Принято',
+  rejected: 'Отклонено',
+  cancelled: 'Отменено',
+};
+
+function formatBatchTitle(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Партия импорта';
+  return `Партия от ${date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
+}
+
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia(DESKTOP_MEDIA_QUERY).matches;
+  });
+
+  useEffect(() => {
+    const mql = window.matchMedia(DESKTOP_MEDIA_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    setIsDesktop(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  return isDesktop;
 }
 
 export default function ImportPage() {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const rows = useImportStore((s) => s.rows);
-  const startImport = useImportStore((s) => s.startImport);
-  const [dragActive, setDragActive] = useState(false);
+  const { batchId } = useParams<{ batchId?: string }>();
+  const navigate = useNavigate();
+  const isDesktop = useIsDesktop();
 
-  const handleFiles = useCallback(
-    (fileList: FileList | null) => {
-      if (!fileList?.length) return;
-      void startImport(Array.from(fileList));
-    },
-    [startImport],
+  const batches = useImportSessionStore((s) => s.batches);
+  const isListLoading = useImportSessionStore((s) => s.isListLoading);
+  const listError = useImportSessionStore((s) => s.listError);
+  const assetsByBatch = useImportSessionStore((s) => s.assetsByBatch);
+  const assetsLoadingByBatch = useImportSessionStore(
+    (s) => s.assetsLoadingByBatch,
+  );
+  const fetchBatches = useImportSessionStore((s) => s.fetchBatches);
+  const createBatch = useImportSessionStore((s) => s.createBatch);
+  const closeBatch = useImportSessionStore((s) => s.closeBatch);
+  const refreshBatch = useImportSessionStore((s) => s.refreshBatch);
+  const fetchBatchAssets = useImportSessionStore((s) => s.fetchBatchAssets);
+  const startUploads = useImportSessionStore((s) => s.startUploads);
+  const startBatchPolling = useImportSessionStore((s) => s.startBatchPolling);
+  const stopBatchPolling = useImportSessionStore((s) => s.stopBatchPolling);
+
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [isCreating, setIsCreating] = useState<boolean>(false);
+  const [isClosing, setIsClosing] = useState<boolean>(false);
+
+  useEffect(() => {
+    setSidebarOpen(isDesktop);
+  }, [isDesktop]);
+
+  useEffect(() => {
+    void fetchBatches();
+  }, [fetchBatches]);
+
+  useEffect(() => {
+    if (!batchId) {
+      stopBatchPolling();
+      return;
+    }
+    void fetchBatchAssets(batchId);
+    void refreshBatch(batchId);
+    startBatchPolling(batchId);
+    return () => {
+      stopBatchPolling();
+    };
+  }, [batchId, fetchBatchAssets, refreshBatch, startBatchPolling, stopBatchPolling]);
+
+  const activeBatch = useMemo(
+    () => (batchId ? batches.find((b) => b.id === batchId) ?? null : null),
+    [batches, batchId],
   );
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragActive(false);
-    handleFiles(e.dataTransfer.files);
-  };
+  const activeAssets = useMemo(
+    () => (batchId ? assetsByBatch[batchId] ?? [] : []),
+    [assetsByBatch, batchId],
+  );
+  const isAssetsLoading = batchId
+    ? assetsLoadingByBatch[batchId] ?? false
+    : false;
 
-  const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-  };
-
-  const onDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragActive(true);
-  };
-
-  const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      setDragActive(false);
+  const handleCreate = useCallback(async () => {
+    if (isCreating) return;
+    setIsCreating(true);
+    try {
+      const batch = await createBatch();
+      navigate(`/import/${batch.id}`);
+      if (!isDesktop) setSidebarOpen(false);
+    } finally {
+      setIsCreating(false);
     }
-  };
+  }, [createBatch, isCreating, isDesktop, navigate]);
+
+  const handleFiles = useCallback(
+    (files: File[]) => {
+      if (!batchId) return;
+      startUploads(batchId, files);
+    },
+    [batchId, startUploads],
+  );
+
+  const canClose = useMemo(() => {
+    if (!activeBatch || activeBatch.status !== 'uploading') return false;
+    if (activeAssets.length === 0) return false;
+    return activeAssets.every((a) => a.status !== 'queued_preview');
+  }, [activeBatch, activeAssets]);
+
+  const hasQueuedPreview = activeAssets.some(
+    (a) => a.status === 'queued_preview',
+  );
+
+  const handleClose = useCallback(async () => {
+    if (!batchId || !canClose || isClosing) return;
+    setIsClosing(true);
+    try {
+      await closeBatch(batchId);
+    } finally {
+      setIsClosing(false);
+    }
+  }, [batchId, canClose, closeBatch, isClosing]);
 
   return (
-    <div className={pageLayout['page-narrow']}>
-      <section className={pageLayout['page-intro-narrow']} aria-labelledby="import-page-title">
-        <h1 id="import-page-title" className={pageLayout.title}>
-          Импорт
-        </h1>
-        <p className={pageLayout['subtitle-relaxed']}>Перетащите фото сюда или выберите файлы</p>
-      </section>
+    <>
+      <ImportsSidebar
+        open={sidebarOpen}
+        onToggle={() => setSidebarOpen((v) => !v)}
+        batches={batches}
+        isLoading={isListLoading}
+        error={listError}
+        onCreate={handleCreate}
+        isCreating={isCreating}
+      />
 
+      <div
+        className={[
+          styles.main,
+          sidebarOpen ? styles['with-sidebar-open'] : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        <div className={pageLayout['page-narrow']}>
+          {!isDesktop && (
+            <button
+              type="button"
+              className={styles['menu-btn']}
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Открыть список партий"
+            >
+              <Menu size={18} />
+              <span>Партии</span>
+            </button>
+          )}
+
+          {!batchId && (
+            <EmptyState
+              onCreate={handleCreate}
+              isCreating={isCreating}
+              hasBatches={batches.length > 0}
+            />
+          )}
+
+          {batchId && !activeBatch && !isAssetsLoading && (
+            <div className={pageLayout.alert}>
+              Партия не найдена. Возможно, она была удалена.
+            </div>
+          )}
+
+          {batchId && activeBatch && (
+            <>
+              <section
+                className={pageLayout['page-intro-narrow']}
+                aria-labelledby="import-batch-title"
+              >
+                <div className={styles['intro-row']}>
+                  <div className={styles['intro-text']}>
+                    <h1 id="import-batch-title" className={pageLayout.title}>
+                      {formatBatchTitle(activeBatch.created_at)}
+                    </h1>
+                    <p className={pageLayout['subtitle-relaxed']}>
+                      Статус: {STATUS_LABEL[activeBatch.status] ?? activeBatch.status}
+                      {activeBatch.assets_count > 0 && (
+                        <> · {activeBatch.assets_count} фото</>
+                      )}
+                    </p>
+                  </div>
+
+                  {activeBatch.status === 'uploading' && (
+                    <button
+                      type="button"
+                      className={styles['close-btn']}
+                      onClick={handleClose}
+                      disabled={!canClose || isClosing}
+                      title={
+                        canClose
+                          ? 'Отправить партию на обработку'
+                          : hasQueuedPreview
+                            ? 'Дождитесь завершения загрузки'
+                            : 'Добавьте хотя бы один файл'
+                      }
+                    >
+                      <CheckCircle2 size={16} />
+                      <span>
+                        {isClosing ? 'Закрываем…' : 'Закрыть партию'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              {activeBatch.status === 'uploading' && (
+                <DropZone onFiles={handleFiles} />
+              )}
+
+              {activeBatch.status === 'processing' && (
+                <div className={styles.banner}>
+                  Идёт ML-обработка фото. Это может занять несколько минут.
+                </div>
+              )}
+
+              {activeBatch.status === 'pending_review' && (
+                <div className={styles.banner}>
+                  Обработка завершена. Партия готова к ревью.
+                </div>
+              )}
+
+              {(activeBatch.status === 'rejected' ||
+                activeBatch.status === 'cancelled') && (
+                <div className={`${styles.banner} ${styles['banner-muted']}`}>
+                  Партия {STATUS_LABEL[activeBatch.status]?.toLowerCase()}.
+                </div>
+              )}
+
+              <BatchAssetsGrid className={styles.assetsGrid} assets={activeAssets} />
+            </>
+          )}
+        </div>
+      </div>
+
+      <UploadProgressDrawer batchId={batchId ?? null} />
+    </>
+  );
+}
+
+interface EmptyStateProps {
+  onCreate: () => void;
+  isCreating: boolean;
+  hasBatches: boolean;
+}
+
+function EmptyState({ onCreate, isCreating, hasBatches }: EmptyStateProps) {
+  return (
+    <section
+      className={`${pageLayout['page-intro-narrow']} ${styles.empty}`}
+      aria-labelledby="import-empty-title"
+    >
+      <h1 id="import-empty-title" className={pageLayout.title}>
+        Импорт
+      </h1>
+      <p className={pageLayout['subtitle-relaxed']}>
+        {hasBatches
+          ? 'Выберите партию слева или создайте новую.'
+          : 'У вас пока нет ни одной партии импорта.'}
+      </p>
       <button
         type="button"
-        className={`${styles['drop-zone']} ${dragActive ? styles['drop-zone-active'] : ''}`}
-        onClick={() => inputRef.current?.click()}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        onDragEnter={onDragEnter}
-        onDragLeave={onDragLeave}
+        className={styles['create-cta']}
+        onClick={onCreate}
+        disabled={isCreating}
       >
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className={styles['hidden-input']}
-          onChange={(e) => {
-            handleFiles(e.target.files);
-            e.target.value = '';
-          }}
-        />
-        <span className={styles['drop-hint']}>Нажмите или перетащите файлы</span>
+        {isCreating ? 'Создаётся…' : '+ Новая партия'}
       </button>
-
-      {rows.length > 0 && (
-        <ul className={styles.list}>
-          {rows.map((row) => (
-            <li key={row.id} className={styles.row}>
-              <div className={styles['row-top']}>
-                <span className={styles['file-name']}>{row.fileName}</span>
-                <span className={styles.status}>{phaseLabel(row.phase, row.message)}</span>
-              </div>
-              <div className={styles['bar-track']}>
-                <div
-                  className={styles['bar-fill']}
-                  style={{
-                    width: `${row.phase === 'uploading' ? row.progress : 100}%`,
-                  }}
-                />
-              </div>
-              {row.phase === 'uploading' && <span className={styles.pct}>{row.progress}%</span>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    </section>
   );
 }

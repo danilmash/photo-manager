@@ -10,9 +10,18 @@ import PhotoViewer from '../../components/ui/PhotoViewer';
 import PersonsStrip from '../../components/ui/PersonsStrip';
 
 function statusLabel(status: string) {
-  if (status === 'importing') return 'Импорт...';
-  if (status === 'error') return 'Ошибка';
-  return status;
+  switch (status) {
+    case 'queued_preview':
+      return 'Загрузка...';
+    case 'preview_ready':
+      return 'Готово к ревью';
+    case 'processing':
+      return 'Обработка...';
+    case 'error':
+      return 'Ошибка';
+    default:
+      return status;
+  }
 }
 
 export default function HomePage() {

@@ -1,7 +1,13 @@
 import type { AxiosProgressEvent } from 'axios';
 import { api } from './client';
 
-export type AssetStatus = 'importing' | 'ready' | 'error' | string;
+export type AssetStatus =
+  | 'queued_preview'
+  | 'preview_ready'
+  | 'processing'
+  | 'ready'
+  | 'error'
+  | string;
 
 export interface UploadAssetResponse {
   asset_id: string;
@@ -34,11 +40,13 @@ export interface AssetListResponse {
 export async function listAssets(params?: {
   limit?: number;
   cursor?: string | null;
+  batchId?: string | null;
 }): Promise<AssetListResponse> {
   const { data } = await api.get<AssetListResponse>('/assets', {
     params: {
       limit: params?.limit,
       cursor: params?.cursor ?? undefined,
+      batch_id: params?.batchId ?? undefined,
     },
   });
   return data;
@@ -47,9 +55,13 @@ export async function listAssets(params?: {
 export async function uploadAsset(
   file: File,
   onUploadProgress?: (event: AxiosProgressEvent) => void,
+  opts?: { batchId?: string | null },
 ): Promise<UploadAssetResponse> {
   const formData = new FormData();
   formData.append('file', file);
+  if (opts?.batchId) {
+    formData.append('batch_id', opts.batchId);
+  }
 
   const { data } = await api.post<UploadAssetResponse>('/assets/upload', formData, {
     onUploadProgress,

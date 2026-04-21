@@ -84,12 +84,18 @@ class UploadResponseSchema(BaseModel):
 class AssetStatusSchema(BaseModel):
     asset_id: UUID
     status: str
+    preview_status: str
+    faces_status: str
+    preview_error: str | None = None
+    faces_error: str | None = None
 
 
 class AssetListItemSchema(BaseModel):
     asset_id: UUID
     title: str | None
     status: str
+    preview_status: str
+    faces_status: str
     created_at: datetime
     thumbnail_file_id: UUID | None
     thumbnail_url: str | None
@@ -141,6 +147,10 @@ class AssetViewerResponseSchema(BaseModel):
     id: UUID
     title: str
     status: str
+    preview_status: str
+    faces_status: str
+    preview_error: str | None = None
+    faces_error: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
     preview_file_id: UUID | None = None

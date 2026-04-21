@@ -2,11 +2,18 @@ import type { AxiosProgressEvent } from 'axios';
 import { api } from './client';
 
 export type AssetStatus =
-  | 'queued_preview'
-  | 'preview_ready'
+  | 'uploaded'
   | 'processing'
   | 'ready'
+  | 'partial_error'
   | 'error'
+  | string;
+
+export type TaskStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
   | string;
 
 export interface UploadAssetResponse {
@@ -18,13 +25,19 @@ export interface UploadAssetResponse {
 
 export interface AssetStatusResponse {
   asset_id: string;
-  status: string;
+  status: AssetStatus;
+  preview_status: TaskStatus;
+  faces_status: TaskStatus;
+  preview_error: string | null;
+  faces_error: string | null;
 }
 
 export interface AssetListItem {
   asset_id: string;
   title: string | null;
   status: AssetStatus;
+  preview_status: TaskStatus;
+  faces_status: TaskStatus;
   created_at: string;
   thumbnail_file_id: string | null;
   thumbnail_url: string | null;
@@ -109,6 +122,10 @@ export interface AssetViewer {
   id: string;
   title: string | null;
   status: AssetStatus;
+  preview_status: TaskStatus;
+  faces_status: TaskStatus;
+  preview_error: string | null;
+  faces_error: string | null;
   created_at: string;
   updated_at: string | null;
   preview_file_id: string | null;
@@ -120,6 +137,24 @@ export interface AssetViewer {
 
 export async function getAssetViewer(assetId: string): Promise<AssetViewer> {
   const { data } = await api.get<AssetViewer>(`/assets/${assetId}`);
+  return data;
+}
+
+export async function retryAssetPreview(
+  assetId: string,
+): Promise<AssetStatusResponse> {
+  const { data } = await api.post<AssetStatusResponse>(
+    `/assets/${assetId}/retry-preview`,
+  );
+  return data;
+}
+
+export async function retryAssetFaces(
+  assetId: string,
+): Promise<AssetStatusResponse> {
+  const { data } = await api.post<AssetStatusResponse>(
+    `/assets/${assetId}/retry-faces`,
+  );
   return data;
 }
 

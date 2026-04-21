@@ -5,19 +5,25 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.assets.models import (
-    ASSET_STATUS_PREVIEW_READY,
-    ASSET_STATUS_QUEUED_PREVIEW,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED,
+    TASK_STATUS_PENDING,
+    TASK_STATUS_PROCESSING,
+    apply_asset_status,
     Asset,
+    File as AssetFileModel,
 )
-from app.assets.tasks import process_asset_ml
+from app.assets.tasks import process_asset_ml, process_asset_preview
 from app.database import get_db
 from app.import_batches.models import (
+    IMPORT_BATCH_STATUS_PENDING_REVIEW,
     IMPORT_BATCH_STATUS_PROCESSING,
     IMPORT_BATCH_STATUS_UPLOADING,
     ImportBatch,
 )
 from app.import_batches.schemas import (
     ImportBatchCreateRequest,
+    ImportBatchRetrySummarySchema,
     ImportBatchSchema,
     ImportBatchSetProjectRequest,
 )
@@ -161,24 +167,27 @@ def close_import_batch(
             detail="Нельзя закрыть пустую партию",
         )
 
-    queued_count = (
+    in_flight_count = (
         db.query(func.count(Asset.id))
         .filter(Asset.import_batch_id == batch.id)
-        .filter(Asset.status == ASSET_STATUS_QUEUED_PREVIEW)
+        .filter(Asset.preview_status.in_([TASK_STATUS_PENDING, TASK_STATUS_PROCESSING]))
         .scalar()
         or 0
     )
-    if queued_count > 0:
+    if in_flight_count > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Есть ассеты без готовых превью, дождитесь загрузки",
         )
 
+    # На ML отправляем только те ассеты, у которых preview успешно завершён.
+    # Ассеты с preview_status=failed остаются в error-е — их можно перезапустить
+    # отдельно через retry-failed-previews уже после закрытия партии.
     ready_asset_ids = [
         row[0]
         for row in db.query(Asset.id)
         .filter(Asset.import_batch_id == batch.id)
-        .filter(Asset.status == ASSET_STATUS_PREVIEW_READY)
+        .filter(Asset.preview_status == TASK_STATUS_COMPLETED)
         .all()
     ]
 
@@ -225,3 +234,124 @@ def set_import_batch_project(
         or 0
     )
     return _to_schema(batch, assets_count)
+
+
+@router.post(
+    "/{batch_id}/retry-failed-previews",
+    response_model=ImportBatchRetrySummarySchema,
+)
+def retry_failed_previews(
+    batch_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Перезапускает preview-задачи для всех ассетов партии с preview_status=failed.
+
+    Разрешено в любом статусе партии: упавший preview можно восстановить
+    как во время активной загрузки, так и уже после закрытия партии.
+    """
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    failed_assets = (
+        db.query(Asset)
+        .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.preview_status == TASK_STATUS_FAILED)
+        .all()
+    )
+
+    tasks_to_enqueue: list[tuple[str, str]] = []
+    for asset in failed_assets:
+        original_file = (
+            db.query(AssetFileModel)
+            .filter_by(asset_id=asset.id, purpose="original")
+            .order_by(AssetFileModel.created_at.desc())
+            .first()
+        )
+        if not original_file:
+            # Без оригинала preview пересобрать невозможно — пропускаем,
+            # ассет останется в error.
+            continue
+
+        asset.preview_status = TASK_STATUS_PENDING
+        asset.preview_error = None
+        apply_asset_status(asset)
+        tasks_to_enqueue.append((str(asset.id), str(original_file.id)))
+
+    if tasks_to_enqueue:
+        db.commit()
+        for asset_id, file_id in tasks_to_enqueue:
+            process_asset_preview.delay(asset_id, file_id)
+
+    return ImportBatchRetrySummarySchema(
+        batch_id=batch.id,
+        restarted=len(tasks_to_enqueue),
+    )
+
+
+@router.post(
+    "/{batch_id}/retry-failed-faces",
+    response_model=ImportBatchRetrySummarySchema,
+)
+def retry_failed_faces(
+    batch_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Перезапускает ML-задачи для всех ассетов партии с faces_status=failed.
+
+    Разрешено только если партия уже в processing или pending_review — в
+    uploading ML ещё не запускался, там просто нечего повторять.
+    Если партия была в pending_review, возвращаем её в processing, иначе
+    _finalize_batch_if_done потом не сможет корректно закрыть её обратно.
+    """
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    if batch.status not in (
+        IMPORT_BATCH_STATUS_PROCESSING,
+        IMPORT_BATCH_STATUS_PENDING_REVIEW,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Повтор faces доступен только для партий в статусе "
+                f"'processing' или 'pending_review' (текущий: '{batch.status}')"
+            ),
+        )
+
+    failed_assets = (
+        db.query(Asset)
+        .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.faces_status == TASK_STATUS_FAILED)
+        .filter(Asset.preview_status == TASK_STATUS_COMPLETED)
+        .all()
+    )
+
+    asset_ids: list[str] = []
+    for asset in failed_assets:
+        asset.faces_status = TASK_STATUS_PENDING
+        asset.faces_error = None
+        apply_asset_status(asset)
+        asset_ids.append(str(asset.id))
+
+    if asset_ids and batch.status == IMPORT_BATCH_STATUS_PENDING_REVIEW:
+        batch.status = IMPORT_BATCH_STATUS_PROCESSING
+
+    if asset_ids:
+        db.commit()
+        for aid in asset_ids:
+            process_asset_ml.delay(aid)
+
+    return ImportBatchRetrySummarySchema(
+        batch_id=batch.id,
+        restarted=len(asset_ids),
+    )

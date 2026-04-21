@@ -94,11 +94,18 @@ function mergeAssets(
     : Array.from(byId.values());
 }
 
+// Финальные статусы ассета — те, в которых бэкенд уже не будет их двигать
+// без явного retry: ready / partial_error / error. Всё остальное
+// (uploaded, processing и т.п.) считается «в работе».
+const FINAL_ASSET_STATUSES: ReadonlySet<string> = new Set([
+  'ready',
+  'partial_error',
+  'error',
+]);
+
 function hasNonFinalAsset(assets: AssetListItem[] | undefined): boolean {
   if (!assets) return false;
-  return assets.some(
-    (a) => a.status === 'queued_preview' || a.status === 'processing',
-  );
+  return assets.some((a) => !FINAL_ASSET_STATUSES.has(a.status));
 }
 
 function upsertBatch(
@@ -249,7 +256,9 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
         const placeholder: AssetListItem = {
           asset_id: res.asset_id,
           title: res.filename,
-          status: (res.status as AssetListItem['status']) ?? 'queued_preview',
+          status: (res.status as AssetListItem['status']) ?? 'uploaded',
+          preview_status: 'pending',
+          faces_status: 'pending',
           created_at: new Date().toISOString(),
           thumbnail_file_id: null,
           thumbnail_url: null,
@@ -330,7 +339,13 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
           get().stopBatchPolling();
         }
 
-        if (assets?.some((a) => a.status === 'ready')) {
+        // Лента дома показывает всё, кроме error — обновляем её, как только
+        // среди ассетов появляются финальные (ready/partial_error).
+        if (
+          assets?.some(
+            (a) => a.status === 'ready' || a.status === 'partial_error',
+          )
+        ) {
           maybeRefreshHomeFeed();
         }
       } catch {
@@ -360,7 +375,7 @@ export async function waitAssetReady(assetId: string, timeoutMs = 120_000) {
   while (Date.now() - start < timeoutMs) {
     try {
       const { status } = await getAssetStatus(assetId);
-      if (status === 'ready' || status === 'error' || status === 'preview_ready') {
+      if (FINAL_ASSET_STATUSES.has(status)) {
         return status;
       }
     } catch {

@@ -8,9 +8,12 @@ from wand.image import Image
 from app.assets.ml_service import detect_faces
 from app.assets.models import (
     ASSET_STATUS_ERROR,
-    ASSET_STATUS_PREVIEW_READY,
-    ASSET_STATUS_PROCESSING,
+    ASSET_STATUS_PARTIAL_ERROR,
     ASSET_STATUS_READY,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED,
+    TASK_STATUS_PROCESSING,
+    apply_asset_status,
     Asset,
     AssetVersion,
     File,
@@ -26,6 +29,18 @@ from app.import_batches.models import (
     ImportBatch,
 )
 import app.users.models  # noqa: F401 — регистрация модели для relationships
+
+
+# Максимальная длина текста ошибки, которую сохраняем в preview_error/faces_error.
+# Ограничиваем, чтобы случайный traceback не распухал до мегабайтов в БД.
+ERROR_TEXT_LIMIT = 2000
+
+
+def _truncate_error(exc: BaseException) -> str:
+    text = str(exc) or exc.__class__.__name__
+    if len(text) > ERROR_TEXT_LIMIT:
+        text = text[:ERROR_TEXT_LIMIT]
+    return text
 
 PREVIEW_SPECS = [
     {"purpose": "thumbnail", "long_side": 300,  "quality": 80, "subdir": "thumbnails"},
@@ -155,10 +170,11 @@ def _save_face_detections(db, asset_id: str, preview_path: Path):
 
 
 def _finalize_batch_if_done(db, batch_id) -> None:
-    """Переводит партию в pending_review, когда все её ассеты в ready/error.
+    """Переводит партию в pending_review, когда все её ассеты финализированы.
 
-    Вызывается в finally у process_asset_ml. Операция идемпотентна:
-    если партия уже не в статусе `processing`, ничего не делает.
+    Финальные статусы ассета: ready / partial_error / error. Вызывается в
+    finally у process_asset_ml. Операция идемпотентна: если партия уже не в
+    статусе `processing`, ничего не делает.
     """
     if batch_id is None:
         return
@@ -170,7 +186,11 @@ def _finalize_batch_if_done(db, batch_id) -> None:
     remaining = (
         db.query(func.count(Asset.id))
         .filter(Asset.import_batch_id == batch_id)
-        .filter(Asset.status.notin_([ASSET_STATUS_READY, ASSET_STATUS_ERROR]))
+        .filter(
+            Asset.status.notin_(
+                [ASSET_STATUS_READY, ASSET_STATUS_PARTIAL_ERROR, ASSET_STATUS_ERROR]
+            )
+        )
         .scalar()
         or 0
     )
@@ -184,7 +204,8 @@ def _finalize_batch_if_done(db, batch_id) -> None:
 def process_asset_preview(asset_id: str, file_id: str):
     """Фаза 1 — дешёвая: метаданные, thumbnail, preview.
 
-    В конце переводит ассет в preview_ready. ML не запускается.
+    Управляет только preview_status / preview_error, общий asset.status
+    пересчитывается из derive_asset_status.
     """
     db = SessionLocal()
     try:
@@ -193,6 +214,13 @@ def process_asset_preview(asset_id: str, file_id: str):
 
         if not asset or not file_record:
             return
+
+        # Отмечаем, что фаза пошла в работу. Коммитим сразу, чтобы клиент
+        # видел processing в API до окончания тяжёлой работы.
+        asset.preview_status = TASK_STATUS_PROCESSING
+        asset.preview_error = None
+        apply_asset_status(asset)
+        db.commit()
 
         file_path = Path(settings.storage_root) / file_record.path
         storage = Path(settings.storage_root)
@@ -246,13 +274,17 @@ def process_asset_preview(asset_id: str, file_id: str):
             )
             db.add(version)
 
-            asset.status = ASSET_STATUS_PREVIEW_READY
+            asset.preview_status = TASK_STATUS_COMPLETED
+            asset.preview_error = None
+            apply_asset_status(asset)
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
             asset = db.query(Asset).filter_by(id=asset_id).first()
             if asset:
-                asset.status = ASSET_STATUS_ERROR
+                asset.preview_status = TASK_STATUS_FAILED
+                asset.preview_error = _truncate_error(exc)
+                apply_asset_status(asset)
                 db.commit()
             raise
     finally:
@@ -263,8 +295,10 @@ def process_asset_preview(asset_id: str, file_id: str):
 def process_asset_ml(asset_id: str):
     """Фаза 2 — дорогая: детекция лиц, кропы, матчинг identity.
 
-    В конце переводит ассет в ready/error и при необходимости финализирует
-    партию импорта (переводит её в pending_review, когда обработаны все).
+    Управляет только faces_status / faces_error. Исключения внутри фазы
+    ловим и не пробрасываем наружу: faces — необязательная фаза, общий
+    статус ассета станет partial_error, а финализация партии обязательно
+    сработает в finally.
     """
     db = SessionLocal()
     batch_id = None
@@ -281,18 +315,25 @@ def process_asset_ml(asset_id: str):
             .order_by(File.created_at.desc())
             .first()
         )
-        if not preview_file:
-            asset.status = ASSET_STATUS_ERROR
+
+        def _fail(reason: str) -> None:
+            asset.faces_status = TASK_STATUS_FAILED
+            asset.faces_error = reason[:ERROR_TEXT_LIMIT]
+            apply_asset_status(asset)
             db.commit()
+
+        if not preview_file:
+            _fail("Превью не найдено: нечего обрабатывать ML")
             return
 
         preview_path = Path(settings.storage_root) / preview_file.path
         if not preview_path.exists():
-            asset.status = ASSET_STATUS_ERROR
-            db.commit()
+            _fail(f"Файл превью отсутствует на диске: {preview_file.path}")
             return
 
-        asset.status = ASSET_STATUS_PROCESSING
+        asset.faces_status = TASK_STATUS_PROCESSING
+        asset.faces_error = None
+        apply_asset_status(asset)
         db.commit()
 
         try:
@@ -301,15 +342,22 @@ def process_asset_ml(asset_id: str):
             _generate_face_crops(db, asset_id, preview_path)
             match_detections_for_asset(db, asset_id)
 
-            asset.status = ASSET_STATUS_READY
+            asset.faces_status = TASK_STATUS_COMPLETED
+            asset.faces_error = None
+            apply_asset_status(asset)
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
             asset = db.query(Asset).filter_by(id=asset_id).first()
             if asset:
-                asset.status = ASSET_STATUS_ERROR
+                asset.faces_status = TASK_STATUS_FAILED
+                asset.faces_error = _truncate_error(exc)
+                apply_asset_status(asset)
                 db.commit()
-            raise
+            # Сознательно глотаем исключение: faces — опциональная фаза,
+            # общий статус ассета теперь partial_error. Пробрасывать наверх
+            # не надо, иначе celery пометит задачу как failed и финализация
+            # батча может не дождаться своих "ответов".
     finally:
         try:
             _finalize_batch_if_done(db, batch_id)

@@ -11,12 +11,14 @@ import PersonsStrip from '../../components/ui/PersonsStrip';
 
 function statusLabel(status: string) {
   switch (status) {
-    case 'queued_preview':
-      return 'Загрузка...';
-    case 'preview_ready':
-      return 'Готово к ревью';
+    case 'uploaded':
+      return 'Загружено';
     case 'processing':
       return 'Обработка...';
+    case 'ready':
+      return 'Готово';
+    case 'partial_error':
+      return 'Частичная ошибка';
     case 'error':
       return 'Ошибка';
     default:

@@ -23,3 +23,8 @@ class ImportBatchSchema(BaseModel):
     assets_count: int
     created_at: datetime
     updated_at: datetime
+
+
+class ImportBatchRetrySummarySchema(BaseModel):
+    batch_id: UUID
+    restarted: int

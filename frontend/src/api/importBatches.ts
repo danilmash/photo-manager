@@ -61,3 +61,26 @@ export async function closeImportBatch(batchId: string): Promise<ImportBatch> {
   );
   return data;
 }
+
+export interface ImportBatchRetrySummary {
+  batch_id: string;
+  restarted: number;
+}
+
+export async function retryBatchFailedPreviews(
+  batchId: string,
+): Promise<ImportBatchRetrySummary> {
+  const { data } = await api.post<ImportBatchRetrySummary>(
+    `/import-batches/${batchId}/retry-failed-previews`,
+  );
+  return data;
+}
+
+export async function retryBatchFailedFaces(
+  batchId: string,
+): Promise<ImportBatchRetrySummary> {
+  const { data } = await api.post<ImportBatchRetrySummary>(
+    `/import-batches/${batchId}/retry-failed-faces`,
+  );
+  return data;
+}

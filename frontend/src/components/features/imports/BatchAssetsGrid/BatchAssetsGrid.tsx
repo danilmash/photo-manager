@@ -1,24 +1,58 @@
 import { AlertTriangle } from 'lucide-react';
 
-import type { AssetListItem } from '../../../../api/assets';
+import type { AssetListItem, TaskStatus } from '../../../../api/assets';
 
 import styles from './BatchAssetsGrid.module.css';
 
-function statusBadge(status: string): string | null {
-  switch (status) {
-    case 'queued_preview':
-      return 'Загрузка…';
-    case 'preview_ready':
-      return 'Готово к ревью';
-    case 'processing':
-      return 'Обработка…';
-    case 'error':
-      return 'Ошибка';
-    case 'ready':
-      return null;
-    default:
-      return status;
+type TileVariant = 'skeleton' | 'thumb' | 'error';
+
+interface TileState {
+  variant: TileVariant;
+  badge: string | null;
+  showFacesError: boolean;
+  clickable: boolean;
+}
+
+function isPreviewInFlight(status: TaskStatus): boolean {
+  return status === 'pending' || status === 'processing';
+}
+
+function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileState {
+  // Preview — ключевая фаза: по ней решаем, что показывать в плитке.
+  // Faces — опциональная фаза, влияет только на бейдж.
+  if (asset.preview_status === 'failed') {
+    return {
+      variant: 'error',
+      badge: 'Ошибка превью',
+      showFacesError: false,
+      clickable: false,
+    };
   }
+
+  if (isPreviewInFlight(asset.preview_status)) {
+    return {
+      variant: 'skeleton',
+      badge: asset.preview_status === 'processing' ? 'Обработка…' : 'Загрузка…',
+      showFacesError: false,
+      clickable: false,
+    };
+  }
+
+  // preview_status === 'completed'
+  const hasThumb = !!asset.thumbnail_url;
+  const facesFailed = asset.faces_status === 'failed';
+  const facesInFlight = isPreviewInFlight(asset.faces_status);
+
+  let badge: string | null = null;
+  if (facesInFlight) badge = 'Поиск лиц…';
+  else if (facesFailed) badge = null; // отдельный бейдж ниже
+
+  return {
+    variant: hasThumb ? 'thumb' : 'skeleton',
+    badge,
+    showFacesError: facesFailed,
+    clickable: hasClickHandler && hasThumb,
+  };
 }
 
 export interface BatchAssetsGridProps {
@@ -39,17 +73,14 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
   return (
     <ul className={`${styles.grid} ${className ?? ''}`}>
       {assets.map((asset) => {
-        const hasThumb = !!asset.thumbnail_url;
-        const isError = asset.status === 'error';
-        const badge = statusBadge(asset.status);
-        const clickable = !!onSelect && hasThumb && !isError;
+        const state = deriveTileState(asset, !!onSelect);
 
         const tile = (
           <div className={styles.tile}>
-            {hasThumb && !isError ? (
+            {state.variant === 'thumb' && asset.thumbnail_url ? (
               <img
                 className={styles.img}
-                src={asset.thumbnail_url!}
+                src={asset.thumbnail_url}
                 alt={asset.title ?? ''}
                 loading="lazy"
                 decoding="async"
@@ -57,10 +88,10 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
             ) : (
               <div
                 className={`${styles.skeleton} ${
-                  isError ? styles['skeleton-error'] : ''
+                  state.variant === 'error' ? styles['skeleton-error'] : ''
                 }`}
               >
-                {isError && (
+                {state.variant === 'error' && (
                   <AlertTriangle
                     size={20}
                     className={styles['error-icon']}
@@ -69,13 +100,21 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
                 )}
               </div>
             )}
-            {badge && <span className={styles.badge}>{badge}</span>}
+            {state.badge && <span className={styles.badge}>{state.badge}</span>}
+            {state.showFacesError && (
+              <span
+                className={`${styles.badge} ${styles['badge-warning']}`}
+                title={asset.faces_status === 'failed' ? 'Поиск лиц завершился ошибкой' : undefined}
+              >
+                Лица: ошибка
+              </span>
+            )}
           </div>
         );
 
         return (
           <li key={asset.asset_id}>
-            {clickable ? (
+            {state.clickable ? (
               <button
                 type="button"
                 className={styles['tile-btn']}
@@ -85,7 +124,10 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
                 {tile}
               </button>
             ) : (
-              <div className={styles['tile-wrap']} aria-hidden={isError}>
+              <div
+                className={styles['tile-wrap']}
+                aria-hidden={state.variant === 'error'}
+              >
                 {tile}
               </div>
             )}

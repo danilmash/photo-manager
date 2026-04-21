@@ -130,14 +130,19 @@ export default function ImportPage() {
     [batchId, startUploads],
   );
 
+  // Закрывать партию можно только когда для каждого ассета завершилась фаза
+  // preview: либо completed (пойдёт на ML), либо failed (останется в error,
+  // его можно будет потом перезапустить через retry-failed-previews).
   const canClose = useMemo(() => {
     if (!activeBatch || activeBatch.status !== 'uploading') return false;
     if (activeAssets.length === 0) return false;
-    return activeAssets.every((a) => a.status !== 'queued_preview');
+    return activeAssets.every(
+      (a) => a.preview_status === 'completed' || a.preview_status === 'failed',
+    );
   }, [activeBatch, activeAssets]);
 
   const hasQueuedPreview = activeAssets.some(
-    (a) => a.status === 'queued_preview',
+    (a) => a.preview_status === 'pending' || a.preview_status === 'processing',
   );
 
   const handleClose = useCallback(async () => {

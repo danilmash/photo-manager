@@ -80,6 +80,18 @@
   letter-spacing: 0.02em;
 }
 
+/* Второй бейдж (например, "Лица: ошибка") — смещаем вправо, чтобы не */
+/* накладывался на основной индикатор статуса. */
+.badge + .badge {
+  left: auto;
+  right: 6px;
+}
+
+.badge-warning {
+  background: var(--color-danger);
+  color: var(--color-text-on-accent, #fff);
+}
+
 .empty {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);

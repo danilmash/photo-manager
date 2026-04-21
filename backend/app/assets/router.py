@@ -15,7 +15,12 @@ from app.users.dependencies import get_current_user
 from app.users.models import User
 from app.config import settings
 from app.assets.models import (
-    ASSET_STATUS_QUEUED_PREVIEW,
+    ASSET_STATUS_ERROR,
+    ASSET_STATUS_UPLOADED,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED,
+    TASK_STATUS_PENDING,
+    apply_asset_status,
     Asset,
     AssetVersion,
     File as AssetFileModel,
@@ -33,10 +38,12 @@ from app.assets.schemas import (
 )
 from app.faces.models import FaceDetection, FaceIdentity
 from app.import_batches.models import (
+    IMPORT_BATCH_STATUS_PENDING_REVIEW,
+    IMPORT_BATCH_STATUS_PROCESSING,
     IMPORT_BATCH_STATUS_UPLOADING,
     ImportBatch,
 )
-from app.assets.tasks import process_asset_preview
+from app.assets.tasks import process_asset_ml, process_asset_preview
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
@@ -224,7 +231,7 @@ def upload_asset(
     asset = Asset(
         id=asset_id,
         title=filename,
-        status=ASSET_STATUS_QUEUED_PREVIEW,
+        status=ASSET_STATUS_UPLOADED,
         owner_id=current_user.id,
         import_batch_id=batch.id if batch else None,
     )
@@ -247,7 +254,7 @@ def upload_asset(
         asset_id=asset_id,
         job_id=task.id,
         filename=filename,
-        status=ASSET_STATUS_QUEUED_PREVIEW,
+        status=ASSET_STATUS_UPLOADED,
     )
 
 
@@ -289,6 +296,8 @@ def list_assets(
         Asset.id.label("asset_id"),
         Asset.title,
         Asset.status,
+        Asset.preview_status,
+        Asset.faces_status,
         Asset.created_at,
         thumb_id_sq.label("thumb_id"),
         preview_id_sq.label("preview_id"),
@@ -299,7 +308,7 @@ def list_assets(
         # это контент ревью, пользователю важно увидеть любые проблемы.
         q = q.filter(Asset.import_batch_id == batch_id)
     else:
-        q = q.filter(Asset.status.notin_(["error"]))
+        q = q.filter(Asset.status != ASSET_STATUS_ERROR)
 
     if cursor:
         try:
@@ -326,6 +335,8 @@ def list_assets(
                 asset_id=row.asset_id,
                 title=row.title,
                 status=row.status,
+                preview_status=row.preview_status,
+                faces_status=row.faces_status,
                 created_at=row.created_at,
                 thumbnail_file_id=row.thumb_id,
                 thumbnail_url=_build_file_url(row.thumb_id),
@@ -410,6 +421,10 @@ def get_asset_viewer(
         id=asset.id,
         title=asset.title,
         status=asset.status,
+        preview_status=asset.preview_status,
+        faces_status=asset.faces_status,
+        preview_error=asset.preview_error,
+        faces_error=asset.faces_error,
         created_at=asset.created_at,
         updated_at=asset.updated_at,
         preview_file_id=preview.id if preview else None,
@@ -453,6 +468,17 @@ def get_asset_metadata(
     )
 
 
+def _build_asset_status_schema(asset: Asset) -> AssetStatusSchema:
+    return AssetStatusSchema(
+        asset_id=asset.id,
+        status=asset.status,
+        preview_status=asset.preview_status,
+        faces_status=asset.faces_status,
+        preview_error=asset.preview_error,
+        faces_error=asset.faces_error,
+    )
+
+
 @router.get("/{asset_id}/status", response_model=AssetStatusSchema)
 def get_asset_status(
     asset_id: uuid_mod.UUID,
@@ -461,4 +487,77 @@ def get_asset_status(
 ):
     asset = _get_asset_or_404(db, asset_id)
 
-    return AssetStatusSchema(asset_id=asset.id, status=asset.status)
+    return _build_asset_status_schema(asset)
+
+
+@router.post("/{asset_id}/retry-preview", response_model=AssetStatusSchema)
+def retry_asset_preview(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _get_asset_or_404(db, asset_id)
+
+    if asset.preview_status != TASK_STATUS_FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Повторить preview можно только у ассетов с "
+                f"preview_status='failed' (текущий: '{asset.preview_status}')"
+            ),
+        )
+
+    original_file = _get_latest_file(db, asset.id, "original")
+    if not original_file:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Невозможно повторить preview: не найден оригинальный файл",
+        )
+
+    asset.preview_status = TASK_STATUS_PENDING
+    asset.preview_error = None
+    apply_asset_status(asset)
+    db.commit()
+
+    process_asset_preview.delay(str(asset.id), str(original_file.id))
+    return _build_asset_status_schema(asset)
+
+
+@router.post("/{asset_id}/retry-faces", response_model=AssetStatusSchema)
+def retry_asset_faces(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _get_asset_or_404(db, asset_id)
+
+    if asset.faces_status != TASK_STATUS_FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Повторить faces можно только у ассетов с "
+                f"faces_status='failed' (текущий: '{asset.faces_status}')"
+            ),
+        )
+    if asset.preview_status != TASK_STATUS_COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Нельзя запускать faces без успешного preview",
+        )
+
+    # Если партия уже ушла в pending_review, возвращаем её в processing —
+    # иначе _finalize_batch_if_done после нашего retry ничего не сделает и
+    # батч так и останется в pending_review с незаконченным ассетом.
+    if asset.import_batch_id is not None:
+        batch = db.query(ImportBatch).filter_by(id=asset.import_batch_id).first()
+        if batch and batch.status == IMPORT_BATCH_STATUS_PENDING_REVIEW:
+            batch.status = IMPORT_BATCH_STATUS_PROCESSING
+            db.add(batch)
+
+    asset.faces_status = TASK_STATUS_PENDING
+    asset.faces_error = None
+    apply_asset_status(asset)
+    db.commit()
+
+    process_asset_ml.delay(str(asset.id))
+    return _build_asset_status_schema(asset)

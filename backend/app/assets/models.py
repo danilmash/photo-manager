@@ -8,13 +8,44 @@ from app.database import Base
 import uuid
 
 
-# Возможные значения Asset.status. Храним строкой, чтобы легко расширять
-# набор без миграций БД.
-ASSET_STATUS_QUEUED_PREVIEW = "queued_preview"
-ASSET_STATUS_PREVIEW_READY = "preview_ready"
+# Общие статусы ассета. Храним строкой, чтобы легко расширять набор без
+# миграций enum. Значение всегда производное от preview_status/faces_status
+# (см. derive_asset_status ниже).
+ASSET_STATUS_UPLOADED = "uploaded"
 ASSET_STATUS_PROCESSING = "processing"
 ASSET_STATUS_READY = "ready"
+ASSET_STATUS_PARTIAL_ERROR = "partial_error"
 ASSET_STATUS_ERROR = "error"
+
+# Статусы конкретной celery-задачи (preview/faces). Используем единый
+# набор, чтобы одинаково обрабатывать любую фазу пайплайна.
+TASK_STATUS_PENDING = "pending"
+TASK_STATUS_PROCESSING = "processing"
+TASK_STATUS_COMPLETED = "completed"
+TASK_STATUS_FAILED = "failed"
+
+
+def derive_asset_status(preview_status: str, faces_status: str) -> str:
+    """Вычисляет общий asset.status из статусов отдельных фаз.
+
+    Правила:
+    * preview — обязательная фаза: её провал = общий error.
+    * faces — опциональная: её провал при успешном preview = partial_error.
+    * processing показываем, только если хотя бы одна фаза действительно
+      выполняется; pending в расчёт не идёт.
+    * "uploaded" покрывает как свежезагруженный ассет (обе фазы pending),
+      так и промежуточное состояние «preview готов, faces ещё не
+      запускались» (ML стартует только при закрытии партии).
+    """
+    if preview_status == TASK_STATUS_FAILED:
+        return ASSET_STATUS_ERROR
+    if preview_status == TASK_STATUS_PROCESSING or faces_status == TASK_STATUS_PROCESSING:
+        return ASSET_STATUS_PROCESSING
+    if preview_status == TASK_STATUS_COMPLETED and faces_status == TASK_STATUS_COMPLETED:
+        return ASSET_STATUS_READY
+    if preview_status == TASK_STATUS_COMPLETED and faces_status == TASK_STATUS_FAILED:
+        return ASSET_STATUS_PARTIAL_ERROR
+    return ASSET_STATUS_UPLOADED
 
 
 class File(Base):
@@ -39,8 +70,15 @@ class Asset(Base):
 
     id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title      = Column(String(512), nullable=True)
-    status     = Column(String(32), nullable=False, default=ASSET_STATUS_QUEUED_PREVIEW)
+    status     = Column(String(32), nullable=False, default=ASSET_STATUS_UPLOADED)
     owner_id   = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Статусы отдельных фаз пайплайна + последние ошибки. Общий status
+    # всегда пересчитывается из этих полей через derive_asset_status.
+    preview_status = Column(String(32), nullable=False, default=TASK_STATUS_PENDING)
+    preview_error  = Column(Text, nullable=True)
+    faces_status   = Column(String(32), nullable=False, default=TASK_STATUS_PENDING)
+    faces_error    = Column(Text, nullable=True)
 
     # Партия импорта, в рамках которой загружен ассет. NULL допустим только
     # для исторических данных, созданных до появления import_batches.
@@ -61,6 +99,11 @@ class Asset(Base):
         cascade="all, delete-orphan",
         order_by="AssetVersion.version_number",
     )
+
+
+def apply_asset_status(asset: Asset) -> None:
+    """Пересчитать общий asset.status из preview_status и faces_status."""
+    asset.status = derive_asset_status(asset.preview_status, asset.faces_status)
 
 
 class AssetVersion(Base):

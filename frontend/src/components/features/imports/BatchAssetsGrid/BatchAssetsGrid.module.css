@@ -67,29 +67,27 @@
   color: var(--color-danger);
 }
 
-.badge {
+.state-badge {
   position: absolute;
   left: 6px;
   bottom: 6px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: var(--color-overlay);
-  color: var(--color-text-primary);
-  font-size: 11px;
-  line-height: 1;
-  letter-spacing: 0.02em;
+  z-index: 1;
 }
 
-/* Второй бейдж (например, "Лица: ошибка") — смещаем вправо, чтобы не */
-/* накладывался на основной индикатор статуса. */
-.badge + .badge {
-  left: auto;
+.faces-error-badge {
+  position: absolute;
   right: 6px;
-}
-
-.badge-warning {
+  bottom: 6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   background: var(--color-danger);
   color: var(--color-text-on-accent, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
 .empty {

@@ -54,17 +54,18 @@
   position: relative;
 }
 
-.badge {
+.state-badge {
   position: absolute;
   left: 8px;
   bottom: 8px;
-  padding: 6px 8px;
-  border-radius: 999px;
-  background: var(--color-overlay);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  line-height: 1;
-  letter-spacing: var(--letter-spacing-wide);
+  z-index: 1;
+}
+
+.skeleton-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 1;
 }
 
 .footer {

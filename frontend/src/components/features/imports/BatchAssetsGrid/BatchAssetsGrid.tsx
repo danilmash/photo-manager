@@ -1,6 +1,10 @@
 import { AlertTriangle } from 'lucide-react';
 
 import type { AssetListItem, TaskStatus } from '../../../../api/assets';
+import PhotoStateBadge, {
+  resolvePhotoStateBadgeVariant,
+  type PhotoStateBadgeVariant,
+} from '../../../ui/PhotoStateBadge';
 
 import styles from './BatchAssetsGrid.module.css';
 
@@ -8,7 +12,7 @@ type TileVariant = 'skeleton' | 'thumb' | 'error';
 
 interface TileState {
   variant: TileVariant;
-  badge: string | null;
+  photoBadge: PhotoStateBadgeVariant | null;
   showFacesError: boolean;
   clickable: boolean;
 }
@@ -18,12 +22,10 @@ function isPreviewInFlight(status: TaskStatus): boolean {
 }
 
 function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileState {
-  // Preview — ключевая фаза: по ней решаем, что показывать в плитке.
-  // Faces — опциональная фаза, влияет только на бейдж.
   if (asset.preview_status === 'failed') {
     return {
       variant: 'error',
-      badge: 'Ошибка превью',
+      photoBadge: null,
       showFacesError: false,
       clickable: false,
     };
@@ -32,24 +34,19 @@ function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileSt
   if (isPreviewInFlight(asset.preview_status)) {
     return {
       variant: 'skeleton',
-      badge: asset.preview_status === 'processing' ? 'Обработка…' : 'Загрузка…',
+      photoBadge: 'processing',
       showFacesError: false,
       clickable: false,
     };
   }
 
-  // preview_status === 'completed'
   const hasThumb = !!asset.thumbnail_url;
   const facesFailed = asset.faces_status === 'failed';
-  const facesInFlight = isPreviewInFlight(asset.faces_status);
-
-  let badge: string | null = null;
-  if (facesInFlight) badge = 'Поиск лиц…';
-  else if (facesFailed) badge = null; // отдельный бейдж ниже
+  const photoBadge = resolvePhotoStateBadgeVariant(asset);
 
   return {
     variant: hasThumb ? 'thumb' : 'skeleton',
-    badge,
+    photoBadge,
     showFacesError: facesFailed,
     clickable: hasClickHandler && hasThumb,
   };
@@ -100,13 +97,21 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
                 )}
               </div>
             )}
-            {state.badge && <span className={styles.badge}>{state.badge}</span>}
+            {state.photoBadge && (
+              <PhotoStateBadge
+                variant={state.photoBadge}
+                className={styles['state-badge']}
+                size="sm"
+              />
+            )}
             {state.showFacesError && (
               <span
-                className={`${styles.badge} ${styles['badge-warning']}`}
-                title={asset.faces_status === 'failed' ? 'Поиск лиц завершился ошибкой' : undefined}
+                className={styles['faces-error-badge']}
+                title="Поиск лиц завершился ошибкой"
+                role="img"
+                aria-label="Ошибка поиска лиц"
               >
-                Лица: ошибка
+                <AlertTriangle size={14} strokeWidth={2.25} aria-hidden />
               </span>
             )}
           </div>

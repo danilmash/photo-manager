@@ -4,38 +4,17 @@ import styles from './HomePage.module.css';
 import { useAssetsFeedStore } from '../../stores/useAssetsFeedStore';
 import type { AssetListItem } from '../../api/assets';
 import Button from '../../components/ui/Button';
+import PhotoStateBadge, {
+  resolvePhotoStateBadgeVariant,
+} from '../../components/ui/PhotoStateBadge';
 import { Upload } from 'lucide-react';
 import Modal from '../../components/ui/Modal';
 import PhotoViewer from '../../components/ui/PhotoViewer';
 import PersonsStrip from '../../components/ui/PersonsStrip';
 
-function statusLabel(status: string) {
-  switch (status) {
-    case 'uploaded':
-      return 'Загружено';
-    case 'processing':
-      return 'Обработка...';
-    case 'ready':
-      return 'Готово';
-    case 'partial_error':
-      return 'Частичная ошибка';
-    case 'error':
-      return 'Ошибка';
-    default:
-      return status;
-  }
-}
-
 /** Миниатюра уже есть после фазы preview; общий status может быть processing (ML). */
 function canShowLibraryThumb(item: AssetListItem): boolean {
   return item.preview_status === 'completed' && !!item.thumbnail_url;
-}
-
-function tileBadgeLabel(item: AssetListItem, statusText: string): string {
-  if (item.faces_status === 'processing' && item.preview_status === 'completed') {
-    return 'Лица…';
-  }
-  return statusText;
 }
 
 export default function HomePage() {
@@ -103,9 +82,8 @@ export default function HomePage() {
         <div className={styles.grid}>
           {tiles.map((item) => {
             const showThumb = canShowLibraryThumb(item);
-            // Превью уже в библиотеке — можно открыть просмотр, пока идёт ML.
             const canOpen = showThumb;
-            const statusText = statusLabel(item.status);
+            const photoBadge = resolvePhotoStateBadgeVariant(item);
             return (
               <button
                 key={item.asset_id}
@@ -125,15 +103,23 @@ export default function HomePage() {
                         loading="lazy"
                         decoding="async"
                       />
-                      {item.status !== 'ready' && (
-                        <span className={styles.badge}>
-                          {tileBadgeLabel(item, statusText)}
-                        </span>
+                      {item.status !== 'ready' && photoBadge && (
+                        <PhotoStateBadge
+                          variant={photoBadge}
+                          className={styles['state-badge']}
+                          size="sm"
+                        />
                       )}
                     </>
                   ) : (
                     <div className={styles.skeleton}>
-                      <span className={styles.badge}>{statusText}</span>
+                      {photoBadge && (
+                        <PhotoStateBadge
+                          variant={photoBadge}
+                          className={styles['skeleton-badge']}
+                          size="md"
+                        />
+                      )}
                     </div>
                   )}
                 </div>

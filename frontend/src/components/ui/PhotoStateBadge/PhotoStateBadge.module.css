@@ -1,0 +1,53 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.sm {
+  width: 28px;
+  height: 28px;
+}
+
+.md {
+  width: 36px;
+  height: 36px;
+}
+
+.faces-pending {
+  background: #e8c23a;
+  color: #2e2600;
+}
+
+.processing {
+  background: color-mix(in srgb, var(--color-overlay) 92%, transparent);
+  color: var(--color-text-primary);
+  backdrop-filter: blur(4px);
+}
+
+.icon {
+  display: block;
+}
+
+.sm .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.md .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.spin {
+  animation: spin 0.85s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

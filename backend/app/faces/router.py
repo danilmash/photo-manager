@@ -1,4 +1,5 @@
 import uuid as uuid_mod
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,13 +11,26 @@ from app.config import settings
 from app.database import get_db
 from app.users.dependencies import get_current_user
 from app.users.models import User
-from app.faces.models import FaceDetection, FaceIdentity, Person
+from app.faces.models import (
+    FACE_REVIEW_STATE_UNRESOLVED,
+    FACE_REVIEW_STATE_USER_CONFIRMED,
+    FACE_REVIEW_STATE_USER_CORRECTED,
+    FaceDetection,
+    FaceIdentity,
+    Person,
+)
 from app.faces.schemas import (
+    AssignNewPersonRequest,
+    AssignPersonRequest,
     AssignIdentityRequest,
     FaceAssignmentResponse,
     PersonListItemSchema,
 )
-from app.faces.services import compute_identity_score, recalculate_centroid
+from app.faces.services import (
+    assign_detection_to_best_person_identity,
+    compute_identity_score,
+    recalculate_centroid,
+)
 
 router = APIRouter(prefix="/api/v1/faces", tags=["faces"])
 
@@ -39,6 +53,22 @@ def _get_identity_or_404(db: Session, identity_id: uuid_mod.UUID) -> FaceIdentit
             detail="Identity not found",
         )
     return ident
+
+
+def _mark_detection_reviewed(
+    det: FaceDetection,
+    current_user: User,
+    *,
+    corrected: bool,
+) -> None:
+    det.review_required = False
+    det.review_state = (
+        FACE_REVIEW_STATE_USER_CORRECTED
+        if corrected
+        else FACE_REVIEW_STATE_USER_CONFIRMED
+    )
+    det.reviewed_by_user_id = current_user.id
+    det.reviewed_at = datetime.utcnow()
 
 
 @router.post(
@@ -67,6 +97,11 @@ def assign_identity(
     det.identity_score = round(score, 6)
     det.assignment_source = "user"
     det.is_reference = True
+    corrected = (
+        det.model_identity_id is not None
+        and det.model_identity_id != identity.id
+    )
+    _mark_detection_reviewed(det, current_user, corrected=corrected)
 
     if identity.cover_face_id is None:
         identity.cover_face_id = det.id
@@ -77,6 +112,82 @@ def assign_identity(
     if old_identity_id and old_identity_id != identity.id:
         recalculate_centroid(db, old_identity_id)
 
+    db.commit()
+
+    return FaceAssignmentResponse(
+        detection_id=det.id,
+        identity_id=det.identity_id,
+        identity_score=det.identity_score,
+        assignment_source=det.assignment_source,
+        is_reference=det.is_reference,
+    )
+
+
+@router.post(
+    "/{detection_id}/assign-person",
+    response_model=FaceAssignmentResponse,
+)
+def assign_person(
+    detection_id: uuid_mod.UUID,
+    body: AssignPersonRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    det = _get_detection_or_404(db, detection_id)
+
+    try:
+        assign_detection_to_best_person_identity(
+            db=db,
+            detection=det,
+            person_id=body.person_id,
+            source="user",
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    corrected = (
+        det.model_identity_id is not None
+        and det.model_identity_id != det.identity_id
+    )
+    _mark_detection_reviewed(det, current_user, corrected=corrected)
+
+    db.commit()
+
+    return FaceAssignmentResponse(
+        detection_id=det.id,
+        identity_id=det.identity_id,
+        identity_score=det.identity_score,
+        assignment_source=det.assignment_source,
+        is_reference=det.is_reference,
+    )
+
+
+@router.post(
+    "/{detection_id}/assign-new-person",
+    response_model=FaceAssignmentResponse,
+)
+def assign_new_person(
+    detection_id: uuid_mod.UUID,
+    body: AssignNewPersonRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    det = _get_detection_or_404(db, detection_id)
+
+    person = Person(name=(body.name or "").strip())
+    db.add(person)
+    db.flush()
+
+    assign_detection_to_best_person_identity(
+        db=db,
+        detection=det,
+        person_id=person.id,
+        source="user",
+    )
+    _mark_detection_reviewed(det, current_user, corrected=True)
     db.commit()
 
     return FaceAssignmentResponse(
@@ -108,8 +219,12 @@ def unassign_identity(
 
     det.identity_id = None
     det.identity_score = None
-    det.assignment_source = None
+    det.assignment_source = "user"
     det.is_reference = False
+    det.review_required = True
+    det.review_state = FACE_REVIEW_STATE_UNRESOLVED
+    det.reviewed_by_user_id = current_user.id
+    det.reviewed_at = datetime.utcnow()
 
     db.flush()
     recalculate_centroid(db, old_identity_id)
@@ -119,7 +234,7 @@ def unassign_identity(
         detection_id=det.id,
         identity_id=None,
         identity_score=None,
-        assignment_source=None,
+        assignment_source=det.assignment_source,
         is_reference=False,
     )
 

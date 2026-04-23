@@ -415,6 +415,9 @@ def get_asset_viewer(
             confidence=det.confidence,
             quality_score=det.quality_score,
             is_reference=det.is_reference,
+            assignment_source=det.assignment_source,
+            review_required=det.review_required,
+            review_state=det.review_state,
         ))
 
     return AssetViewerResponseSchema(

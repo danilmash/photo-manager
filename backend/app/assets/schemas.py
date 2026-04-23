@@ -141,6 +141,9 @@ class AssetViewerFaceSchema(BaseModel):
     confidence: float | None = None
     quality_score: float | None = None
     is_reference: bool = False
+    assignment_source: str | None = None
+    review_required: bool = True
+    review_state: str | None = None
 
 
 class AssetViewerResponseSchema(BaseModel):

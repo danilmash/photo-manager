@@ -13,6 +13,7 @@ from app.assets.models import (
     Asset,
     File as AssetFileModel,
 )
+from app.faces.models import FaceDetection
 from app.assets.tasks import process_asset_ml, process_asset_preview
 from app.database import get_db
 from app.import_batches.models import (
@@ -23,6 +24,8 @@ from app.import_batches.models import (
 )
 from app.import_batches.schemas import (
     ImportBatchCreateRequest,
+    ImportBatchReviewAssetItemSchema,
+    ImportBatchReviewAssetsResponseSchema,
     ImportBatchRetrySummarySchema,
     ImportBatchSchema,
     ImportBatchSetProjectRequest,
@@ -53,6 +56,12 @@ def _to_schema(batch: ImportBatch, assets_count: int) -> ImportBatchSchema:
         created_at=batch.created_at,
         updated_at=batch.updated_at,
     )
+
+
+def _build_file_url(file_id: uuid_mod.UUID | None) -> str | None:
+    if not file_id:
+        return None
+    return f"/api/v1/assets/files/{file_id}"
 
 
 @router.post(
@@ -131,6 +140,92 @@ def get_import_batch(
 
     batch, count = row
     return _to_schema(batch, count or 0)
+
+
+@router.get(
+    "/{batch_id}/review-assets",
+    response_model=ImportBatchReviewAssetsResponseSchema,
+)
+def list_import_batch_review_assets(
+    batch_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    review_faces_count_sq = (
+        select(func.count(FaceDetection.id))
+        .where(
+            FaceDetection.asset_id == Asset.id,
+            FaceDetection.review_required.is_(True),
+        )
+        .correlate(Asset)
+        .scalar_subquery()
+    )
+    preview_file_id_sq = (
+        select(AssetFileModel.id)
+        .where(
+            AssetFileModel.asset_id == Asset.id,
+            AssetFileModel.purpose == "preview",
+        )
+        .order_by(AssetFileModel.created_at.desc())
+        .limit(1)
+        .correlate(Asset)
+        .scalar_subquery()
+    )
+
+    base_query = (
+        db.query(
+            Asset.id,
+            Asset.title,
+            Asset.status,
+            Asset.preview_status,
+            Asset.faces_status,
+            Asset.created_at,
+            review_faces_count_sq.label("review_faces_count"),
+            preview_file_id_sq.label("preview_file_id"),
+        )
+        .filter(Asset.import_batch_id == batch.id)
+        .filter(review_faces_count_sq > 0)
+    )
+
+    total = base_query.count()
+    rows = (
+        base_query
+        .order_by(Asset.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    items = [
+        ImportBatchReviewAssetItemSchema(
+            asset_id=row.id,
+            title=row.title,
+            status=row.status,
+            preview_status=row.preview_status,
+            faces_status=row.faces_status,
+            review_faces_count=row.review_faces_count or 0,
+            preview_file_id=row.preview_file_id,
+            preview_url=_build_file_url(row.preview_file_id),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+    return ImportBatchReviewAssetsResponseSchema(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/{batch_id}/close", response_model=ImportBatchSchema)

@@ -43,6 +43,14 @@ class AssignIdentityRequest(BaseModel):
     identity_id: UUID
 
 
+class AssignPersonRequest(BaseModel):
+    person_id: UUID
+
+
+class AssignNewPersonRequest(BaseModel):
+    name: str | None = ""
+
+
 class FaceAssignmentResponse(BaseModel):
     detection_id: UUID
     identity_id: UUID | None

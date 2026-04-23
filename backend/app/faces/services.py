@@ -5,11 +5,18 @@ from uuid import UUID
 import numpy as np
 from sqlalchemy.orm import Session
 
-from app.faces.models import FaceCandidate, FaceDetection, FaceIdentity, Person
+from app.faces.models import (
+    FACE_REVIEW_STATE_PENDING_REVIEW,
+    FaceCandidate,
+    FaceDetection,
+    FaceIdentity,
+    Person,
+)
 
 MATCH_SCORE_THRESHOLD = 0.55
 MATCH_MARGIN_THRESHOLD = 0.10
 MAX_CANDIDATES = 5
+PERSON_IDENTITY_SCORE_THRESHOLD = 0.55
 
 
 def recalculate_centroid(db: Session, identity_id: UUID) -> None:
@@ -121,21 +128,15 @@ def match_detection(db: Session, detection: FaceDetection) -> None:
 
 
 def _create_new_identity(db: Session, detection: FaceDetection) -> FaceIdentity:
-    """Bootstrap a new FaceIdentity from a single detection,
-    creating a placeholder Person automatically.
-    """
+    """Create an unresolved identity and mark detection for user review."""
     emb = list(detection.embedding)
     arr = np.array(emb, dtype=np.float64)
     norm = np.linalg.norm(arr)
     if norm > 0:
         arr = arr / norm
 
-    person = Person(name="", cover_face_id=detection.id)
-    db.add(person)
-    db.flush()
-
     identity = FaceIdentity(
-        person_id=person.id,
+        person_id=None,
         centroid_embedding=arr.tolist(),
         samples_count=1,
         cover_face_id=detection.id,
@@ -147,8 +148,93 @@ def _create_new_identity(db: Session, detection: FaceDetection) -> FaceIdentity:
     detection.identity_score = 1.0
     detection.assignment_source = "model"
     detection.is_reference = True
+    detection.review_required = True
+    detection.review_state = FACE_REVIEW_STATE_PENDING_REVIEW
 
     return identity
+
+
+def _create_identity_for_person(
+    db: Session,
+    detection: FaceDetection,
+    person: Person,
+    source: str = "user",
+) -> FaceIdentity:
+    """Create a new identity under an existing person and assign detection."""
+    emb = list(detection.embedding)
+    arr = np.array(emb, dtype=np.float64)
+    norm = np.linalg.norm(arr)
+    if norm > 0:
+        arr = arr / norm
+
+    identity = FaceIdentity(
+        person_id=person.id,
+        centroid_embedding=arr.tolist(),
+        samples_count=1,
+        cover_face_id=detection.id,
+    )
+    db.add(identity)
+    db.flush()
+
+    if person.cover_face_id is None:
+        person.cover_face_id = detection.id
+
+    detection.identity_id = identity.id
+    detection.identity_score = 1.0
+    detection.assignment_source = source
+    detection.is_reference = True
+    return identity
+
+
+def assign_detection_to_best_person_identity(
+    db: Session,
+    detection: FaceDetection,
+    person_id: UUID,
+    source: str = "user",
+    min_score_to_reuse: float = PERSON_IDENTITY_SCORE_THRESHOLD,
+) -> FaceIdentity:
+    """Assign detection to the best identity of a person or create a new one.
+
+    If the best available identity centroid score is below ``min_score_to_reuse``,
+    a new identity is created under the given person.
+    """
+    person = db.query(Person).filter_by(id=person_id).first()
+    if not person:
+        raise ValueError("Person not found")
+
+    old_identity_id = detection.identity_id
+    emb = list(detection.embedding)
+
+    scored: list[tuple[FaceIdentity, float]] = []
+    for ident in person.identities:
+        if ident.centroid_embedding is None:
+            continue
+        score = compute_identity_score(emb, list(ident.centroid_embedding))
+        scored.append((ident, score))
+
+    selected_identity: FaceIdentity
+    selected_score: float
+    if not scored:
+        selected_identity = _create_identity_for_person(db, detection, person, source=source)
+        selected_score = 1.0
+    else:
+        scored.sort(key=lambda item: item[1], reverse=True)
+        best_identity, best_score = scored[0]
+        if best_score < min_score_to_reuse:
+            selected_identity = _create_identity_for_person(db, detection, person, source=source)
+            selected_score = 1.0
+        else:
+            _accept_detection(db, detection, best_identity, best_score, source)
+            selected_identity = best_identity
+            selected_score = best_score
+
+    # Keep explicit rounded value aligned with existing API responses.
+    detection.identity_score = round(selected_score, 6)
+
+    if old_identity_id and old_identity_id != selected_identity.id:
+        recalculate_centroid(db, old_identity_id)
+
+    return selected_identity
 
 
 def match_detections_for_asset(db: Session, asset_id: str | UUID) -> None:

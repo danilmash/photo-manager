@@ -7,6 +7,12 @@ from app.database import Base
 import uuid
 from pgvector.sqlalchemy import Vector
 
+FACE_REVIEW_STATE_AUTO_ASSIGNED = "auto_assigned"
+FACE_REVIEW_STATE_PENDING_REVIEW = "pending_review"
+FACE_REVIEW_STATE_USER_CONFIRMED = "user_confirmed"
+FACE_REVIEW_STATE_USER_CORRECTED = "user_corrected"
+FACE_REVIEW_STATE_UNRESOLVED = "unresolved"
+
 class Person(Base):
     __tablename__ = "persons"
 
@@ -111,6 +117,15 @@ class FaceDetection(Base):
     model_identity_margin = Column(Float, nullable=True)
 
     assignment_source = Column(String(16), nullable=True)
+
+    review_state = Column(String(32), nullable=False, default=FACE_REVIEW_STATE_PENDING_REVIEW)
+    review_required = Column(Boolean, nullable=False, default=True)
+    reviewed_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_at = Column(TIMESTAMP, nullable=True)
 
     crop_path = Column(String(512), nullable=True)
 

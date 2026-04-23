@@ -28,3 +28,22 @@ class ImportBatchSchema(BaseModel):
 class ImportBatchRetrySummarySchema(BaseModel):
     batch_id: UUID
     restarted: int
+
+
+class ImportBatchReviewAssetItemSchema(BaseModel):
+    asset_id: UUID
+    title: str | None
+    status: str
+    preview_status: str
+    faces_status: str
+    review_faces_count: int
+    preview_file_id: UUID | None
+    preview_url: str | None
+    created_at: datetime
+
+
+class ImportBatchReviewAssetsResponseSchema(BaseModel):
+    items: list[ImportBatchReviewAssetItemSchema]
+    total: int
+    limit: int
+    offset: int

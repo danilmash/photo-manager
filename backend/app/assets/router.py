@@ -31,12 +31,13 @@ from app.assets.schemas import (
     AssetListItemSchema,
     AssetListResponseSchema,
     AssetViewerResponseSchema,
+    AssetViewerFacePersonCandidateSchema,
     AssetViewerFaceSchema,
     AssetPhotoInfoSchema,
     AssetMetadataSchema,
     AssetMetadataResponseSchema,
 )
-from app.faces.models import FaceDetection, FaceIdentity
+from app.faces.models import FaceCandidate, FaceDetection, FaceIdentity
 from app.import_batches.models import (
     IMPORT_BATCH_STATUS_PENDING_REVIEW,
     IMPORT_BATCH_STATUS_PROCESSING,
@@ -395,7 +396,10 @@ def get_asset_viewer(
         db.query(FaceDetection)
         .options(
             joinedload(FaceDetection.identity)
-            .joinedload(FaceIdentity.person)
+            .joinedload(FaceIdentity.person),
+            joinedload(FaceDetection.candidates)
+            .joinedload(FaceCandidate.identity)
+            .joinedload(FaceIdentity.person),
         )
         .filter(FaceDetection.asset_id == asset_id)
         .order_by(FaceDetection.created_at.asc())
@@ -406,6 +410,31 @@ def get_asset_viewer(
     for det in detections:
         identity = det.identity
         person = identity.person if identity else None
+        grouped_candidates: dict[uuid_mod.UUID, AssetViewerFacePersonCandidateSchema] = {}
+        for candidate in det.candidates:
+            candidate_identity = candidate.identity
+            candidate_person = candidate_identity.person if candidate_identity else None
+            if not candidate_person:
+                continue
+
+            person_id = candidate_person.id
+            existing = grouped_candidates.get(person_id)
+            if existing and existing.score >= candidate.score:
+                continue
+
+            grouped_candidates[person_id] = AssetViewerFacePersonCandidateSchema(
+                person_id=person_id,
+                person_name=candidate_person.name,
+                best_identity_id=candidate.identity_id,
+                rank=candidate.rank,
+                score=candidate.score,
+            )
+
+        person_candidates = sorted(
+            grouped_candidates.values(),
+            key=lambda item: item.score,
+            reverse=True,
+        )
         faces.append(AssetViewerFaceSchema(
             id=det.id,
             identity_id=identity.id if identity else None,
@@ -418,6 +447,7 @@ def get_asset_viewer(
             assignment_source=det.assignment_source,
             review_required=det.review_required,
             review_state=det.review_state,
+            candidates=person_candidates,
         ))
 
     return AssetViewerResponseSchema(

@@ -144,6 +144,15 @@ class AssetViewerFaceSchema(BaseModel):
     assignment_source: str | None = None
     review_required: bool = True
     review_state: str | None = None
+    candidates: list["AssetViewerFacePersonCandidateSchema"] = []
+
+
+class AssetViewerFacePersonCandidateSchema(BaseModel):
+    person_id: UUID
+    person_name: str | None = None
+    best_identity_id: UUID
+    rank: int
+    score: float
 
 
 class AssetViewerResponseSchema(BaseModel):

@@ -6,6 +6,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.faces.models import (
+    FACE_REVIEW_STATE_AUTO_ASSIGNED,
     FACE_REVIEW_STATE_PENDING_REVIEW,
     FaceCandidate,
     FaceDetection,
@@ -75,6 +76,9 @@ def _accept_detection(
     detection.identity_score = score
     detection.assignment_source = source
     detection.is_reference = True
+    if source == "model":
+        detection.review_required = False
+        detection.review_state = FACE_REVIEW_STATE_AUTO_ASSIGNED
 
     if identity.cover_face_id is None:
         identity.cover_face_id = detection.id
@@ -115,12 +119,19 @@ def match_detection(db: Session, detection: FaceDetection) -> None:
 
     best_identity, best_score = top[0]
     margin = best_score - top[1][1] if len(top) >= 2 else best_score
+    top_same_person = (
+        len(top) >= 2
+        and top[0][0].person_id is not None
+        and top[0][0].person_id == top[1][0].person_id
+    )
 
     detection.model_identity_id = best_identity.id
     detection.model_identity_score = round(best_score, 6)
     detection.model_identity_margin = round(margin, 6)
 
-    if best_score >= MATCH_SCORE_THRESHOLD and margin >= MATCH_MARGIN_THRESHOLD:
+    if best_score >= MATCH_SCORE_THRESHOLD and (
+        margin >= MATCH_MARGIN_THRESHOLD or top_same_person
+    ):
         _accept_detection(db, detection, best_identity, best_score, "model")
     else:
         if best_score < MATCH_SCORE_THRESHOLD:

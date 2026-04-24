@@ -35,6 +35,7 @@ import app.users.models  # noqa: F401 — регистрация модели д
 # Ограничиваем, чтобы случайный traceback не распухал до мегабайтов в БД.
 ERROR_TEXT_LIMIT = 2000
 
+FACE_CONFIDENCE_THRESHOLD = 0.3
 
 def _truncate_error(exc: BaseException) -> str:
     text = str(exc) or exc.__class__.__name__
@@ -154,13 +155,25 @@ def _save_face_detections(db, asset_id: str, preview_path: Path):
         return
 
     for face in faces:
-        if face["confidence"] < 0.7:
+        if face["confidence"] < FACE_CONFIDENCE_THRESHOLD:
+            continue
+
+        bbox = face.get("bbox") or {}
+        x = float(bbox.get("x", 0.0))
+        y = float(bbox.get("y", 0.0))
+        w = float(bbox.get("w", 0.0))
+        h = float(bbox.get("h", 0.0))
+        # Backend safety net against ML full-frame fallback bbox.
+        if x <= 0.001 and y <= 0.001 and w >= 0.998 and h >= 0.998:
+            continue
+
+        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 0.0 < w <= 1.0 and 0.0 < h <= 1.0):
             continue
 
         db.add(FaceDetection(
             asset_id=asset_id,
             face_index=face["face_index"],
-            bbox=face["bbox"],
+            bbox=bbox,
             embedding=face["embedding"],
             confidence=face["confidence"],
             quality_score=face.get("quality_score"),
@@ -303,7 +316,12 @@ def process_asset_ml(asset_id: str):
     db = SessionLocal()
     batch_id = None
     try:
-        asset = db.query(Asset).filter_by(id=asset_id).first()
+        try:
+            asset_uuid = uuid.UUID(asset_id)
+        except ValueError:
+            return
+
+        asset = db.query(Asset).filter_by(id=asset_uuid).first()
         if not asset:
             return
 
@@ -311,7 +329,7 @@ def process_asset_ml(asset_id: str):
 
         preview_file = (
             db.query(File)
-            .filter_by(asset_id=asset_id, purpose="preview")
+            .filter_by(asset_id=asset.id, purpose="preview")
             .order_by(File.created_at.desc())
             .first()
         )
@@ -337,10 +355,14 @@ def process_asset_ml(asset_id: str):
         db.commit()
 
         try:
-            _save_face_detections(db, asset_id, preview_path)
+            # Make ML reruns idempotent: keep only fresh detections for this asset.
+            db.query(FaceDetection).filter_by(asset_id=asset.id).delete()
             db.flush()
-            _generate_face_crops(db, asset_id, preview_path)
-            match_detections_for_asset(db, asset_id)
+
+            _save_face_detections(db, str(asset.id), preview_path)
+            db.flush()
+            _generate_face_crops(db, str(asset.id), preview_path)
+            match_detections_for_asset(db, asset.id)
 
             asset.faces_status = TASK_STATUS_COMPLETED
             asset.faces_error = None
@@ -348,7 +370,7 @@ def process_asset_ml(asset_id: str):
             db.commit()
         except Exception as exc:
             db.rollback()
-            asset = db.query(Asset).filter_by(id=asset_id).first()
+            asset = db.query(Asset).filter_by(id=asset_uuid).first()
             if asset:
                 asset.faces_status = TASK_STATUS_FAILED
                 asset.faces_error = _truncate_error(exc)

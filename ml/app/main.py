@@ -28,7 +28,12 @@ def load_model():
 
     dummy = np.zeros((100, 100, 3), dtype=np.uint8)
     try:
-        DeepFace.represent(dummy, model_name="Facenet", enforce_detection=False)
+        DeepFace.represent(
+            dummy,
+            model_name="ArcFace",
+            detector_backend="retinaface",
+            enforce_detection=False,
+        )
     except Exception:
         pass
 
@@ -55,6 +60,23 @@ def _compute_quality_score(
     return round(0.4 * area_score + 0.6 * confidence, 4)
 
 
+def _is_full_frame_fallback(
+    px_x: int,
+    px_y: int,
+    px_w: int,
+    px_h: int,
+    img_w: int,
+    img_h: int,
+) -> bool:
+    """DeepFace fallback when no face is detected with enforce_detection=False."""
+    return (
+        px_x <= 1
+        and px_y <= 1
+        and px_w >= (img_w - 2)
+        and px_h >= (img_h - 2)
+    )
+
+
 @app.post("/detect", response_model=DetectResponse)
 def detect_faces(body: DetectRequest):
     from deepface import DeepFace
@@ -71,8 +93,8 @@ def detect_faces(body: DetectRequest):
     try:
         results = DeepFace.represent(
             img_array,
-            model_name="Facenet",
-            detector_backend="opencv",
+            model_name="ArcFace",
+            detector_backend="retinaface",
             enforce_detection=False,
         )
     except Exception as e:
@@ -86,9 +108,19 @@ def detect_faces(body: DetectRequest):
         px_y = region.get("y", 0)
         px_w = region.get("w", 0)
         px_h = region.get("h", 0)
-        confidence = float(region.get("confidence", 1.0))
+        raw_confidence = (
+            region.get("confidence")
+            if region.get("confidence") is not None
+            else r.get("face_confidence")
+        )
+        try:
+            confidence = float(raw_confidence) if raw_confidence is not None else 1.0
+        except (TypeError, ValueError):
+            confidence = 1.0
 
         if px_w <= 0 or px_h <= 0:
+            continue
+        if _is_full_frame_fallback(px_x, px_y, px_w, px_h, w_img, h_img):
             continue
 
         faces.append(FaceResult(

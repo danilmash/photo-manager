@@ -54,7 +54,7 @@ class FaceIdentity(Base):
     )
 
     # Центр кластера подтвержденных / подходящих face embeddings
-    centroid_embedding = Column(Vector(128), nullable=True)
+    centroid_embedding = Column(Vector(512), nullable=True)
 
     # Сколько faces входит в identity
     samples_count = Column(Integer, nullable=False, default=0)
@@ -99,7 +99,7 @@ class FaceDetection(Base):
 
     face_index   = Column(Integer, nullable=False)
     bbox         = Column(JSONB, nullable=False) # [x, y, width, height]
-    embedding    = Column(Vector(128), nullable=False)
+    embedding    = Column(Vector(512), nullable=False)
     confidence   = Column(Float, nullable=False)
 
     quality_score = Column(Float, nullable=True)

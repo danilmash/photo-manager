@@ -112,10 +112,25 @@ export interface AssetPhotoInfo {
 
 export interface AssetViewerFace {
   id: string;
+  identity_id: string | null;
   person_id: string | null;
   person_name: string | null;
   bbox: unknown | null;
   confidence: number | null;
+  quality_score: number | null;
+  is_reference: boolean;
+  assignment_source: string | null;
+  review_required: boolean;
+  review_state: string | null;
+  candidates: AssetViewerFaceCandidate[];
+}
+
+export interface AssetViewerFaceCandidate {
+  person_id: string;
+  person_name: string | null;
+  best_identity_id: string;
+  rank: number;
+  score: number;
 }
 
 export interface AssetViewer {

@@ -197,6 +197,43 @@ def _create_identity_for_person(
     return identity
 
 
+def _assign_existing_identity_to_person(
+    detection: FaceDetection,
+    identity: FaceIdentity,
+    person: Person,
+    source: str = "user",
+) -> FaceIdentity:
+    """Bind an already assigned person-less identity to a person as-is.
+
+    This preserves the current identity for the whole cluster instead of
+    moving only the selected detection into another identity.
+    """
+    identity.person_id = person.id
+
+    if identity.cover_face_id is None:
+        identity.cover_face_id = detection.id
+
+    if person.cover_face_id is None:
+        person.cover_face_id = identity.cover_face_id or detection.id
+
+    detection.identity_id = identity.id
+    detection.assignment_source = source
+    detection.is_reference = True
+
+    if identity.centroid_embedding is not None:
+        detection.identity_score = round(
+            compute_identity_score(
+                list(detection.embedding),
+                list(identity.centroid_embedding),
+            ),
+            6,
+        )
+    elif detection.identity_score is None:
+        detection.identity_score = 1.0
+
+    return identity
+
+
 def assign_detection_to_best_person_identity(
     db: Session,
     detection: FaceDetection,
@@ -214,6 +251,16 @@ def assign_detection_to_best_person_identity(
         raise ValueError("Person not found")
 
     old_identity_id = detection.identity_id
+    current_identity = detection.identity
+
+    if current_identity and current_identity.person_id is None:
+        return _assign_existing_identity_to_person(
+            detection=detection,
+            identity=current_identity,
+            person=person,
+            source=source,
+        )
+
     emb = list(detection.embedding)
 
     scored: list[tuple[FaceIdentity, float]] = []

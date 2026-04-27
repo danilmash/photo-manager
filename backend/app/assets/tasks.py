@@ -122,17 +122,25 @@ def _generate_face_crops(db, asset_id: str, preview_path: Path):
             px_h = int(bbox["h"] * h_img)
 
             pad = int(max(px_w, px_h) * 0.2)
-            left = max(px_x - pad, 0)
-            top = max(px_y - pad, 0)
-            crop_w = min(px_x + px_w + pad, w_img) - left
-            crop_h = min(px_y + px_h + pad, h_img) - top
+            face_left = max(px_x - pad, 0)
+            face_top = max(px_y - pad, 0)
+            face_right = min(px_x + px_w + pad, w_img)
+            face_bottom = min(px_y + px_h + pad, h_img)
+            crop_w = max(face_right - face_left, 1)
+            crop_h = max(face_bottom - face_top, 1)
+
+            # Build a square crop directly within original image bounds.
+            # This avoids using extent() padding that can introduce white bars.
+            side = min(max(crop_w, crop_h), w_img, h_img)
+            center_x = face_left + crop_w / 2
+            center_y = face_top + crop_h / 2
+            left = int(round(center_x - side / 2))
+            top = int(round(center_y - side / 2))
+            left = max(0, min(left, w_img - side))
+            top = max(0, min(top, h_img - side))
 
             with img.clone() as crop:
-                crop.crop(left, top, width=crop_w, height=crop_h)
-
-                side = max(crop.width, crop.height)
-                crop.gravity = "center"
-                crop.extent(side, side)
+                crop.crop(left, top, width=side, height=side)
 
                 crop.resize(256, 256)
                 crop.format = "jpeg"

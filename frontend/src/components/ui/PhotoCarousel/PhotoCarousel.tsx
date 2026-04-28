@@ -29,14 +29,16 @@ export default function PhotoCarousel({ photos, currentIndex, onSelect }: PhotoC
     return (
         <div className={styles['photo-carousel']}>
             {photos.map((photo, index) => {
-                if (photo.preview_url || photo.thumbnail_url) {
+                const pv = photo.version?.preview_url;
+                const tv = photo.version?.thumbnail_url;
+                if (pv || tv) {
                     return (
                         <img 
                             ref={(node) => {
                                 itemRefs.current[index] = node;
                             }}
                             key={index}
-                            src={photo.preview_url || photo.thumbnail_url || ''}
+                            src={pv || tv || ''}
                             alt={`Photo ${index + 1}`}
                             className={`carousel-photo ${index === currentIndex ? 'active' : ''}`}
                             onClick={() => onSelect(index)}

@@ -16,15 +16,45 @@ export type TaskStatus =
   | 'failed'
   | string;
 
-export interface UploadAssetResponse {
-  asset_id: string;
-  job_id: string;
-  filename: string;
-  status: string;
+/** Последняя (или запрошенная) версия ассета — те же поля, что и в AssetViewer.version */
+export interface AssetVersionSummary {
+  id: string;
+  version_number: number;
+  base_version_id: string | null;
+  status: AssetStatus;
+  preview_status: TaskStatus;
+  faces_status: TaskStatus;
+  preview_error: string | null;
+  faces_error: string | null;
+  recipe: Record<string, unknown>;
+  rendered_width: number | null;
+  rendered_height: number | null;
+  is_identity_source: boolean;
+  preview_file_id: string | null;
+  preview_url: string | null;
+  thumbnail_file_id: string | null;
+  thumbnail_url: string | null;
+  created_at: string;
 }
 
-export interface AssetStatusResponse {
+export interface UploadAssetResponse {
   asset_id: string;
+  version_id: string;
+  version_number: number;
+  status: AssetStatus;
+  preview_status: TaskStatus;
+  faces_status: TaskStatus;
+  preview_error: string | null;
+  faces_error: string | null;
+  job_id: string;
+  filename: string;
+}
+
+/** Ответ GET /assets/:id/status и retry-* — статус текущей (последней) версии */
+export interface AssetVersionStatus {
+  asset_id: string;
+  version_id: string;
+  version_number: number;
   status: AssetStatus;
   preview_status: TaskStatus;
   faces_status: TaskStatus;
@@ -35,14 +65,10 @@ export interface AssetStatusResponse {
 export interface AssetListItem {
   asset_id: string;
   title: string | null;
-  status: AssetStatus;
-  preview_status: TaskStatus;
-  faces_status: TaskStatus;
   created_at: string;
-  thumbnail_file_id: string | null;
-  thumbnail_url: string | null;
-  preview_file_id: string | null;
-  preview_url: string | null;
+  updated_at: string;
+  /** Последняя версия по version_number; после загрузки обычно не null */
+  version: AssetVersionSummary | null;
 }
 
 export interface AssetListResponse {
@@ -83,8 +109,8 @@ export async function uploadAsset(
   return data;
 }
 
-export async function getAssetStatus(assetId: string): Promise<AssetStatusResponse> {
-  const { data } = await api.get<AssetStatusResponse>(`/assets/${assetId}/status`);
+export async function getAssetStatus(assetId: string): Promise<AssetVersionStatus> {
+  const { data } = await api.get<AssetVersionStatus>(`/assets/${assetId}/status`);
   return data;
 }
 
@@ -112,6 +138,7 @@ export interface AssetPhotoInfo {
 
 export interface AssetViewerFace {
   id: string;
+  asset_version_id: string;
   identity_id: string | null;
   person_id: string | null;
   person_name: string | null;
@@ -136,15 +163,9 @@ export interface AssetViewerFaceCandidate {
 export interface AssetViewer {
   id: string;
   title: string | null;
-  status: AssetStatus;
-  preview_status: TaskStatus;
-  faces_status: TaskStatus;
-  preview_error: string | null;
-  faces_error: string | null;
   created_at: string;
   updated_at: string | null;
-  preview_file_id: string | null;
-  preview_url: string | null;
+  version: AssetVersionSummary | null;
   photo: AssetPhotoInfo;
   faces: AssetViewerFace[];
   faces_count: number;
@@ -157,18 +178,20 @@ export async function getAssetViewer(assetId: string): Promise<AssetViewer> {
 
 export async function retryAssetPreview(
   assetId: string,
-): Promise<AssetStatusResponse> {
-  const { data } = await api.post<AssetStatusResponse>(
-    `/assets/${assetId}/retry-preview`,
+  versionId: string,
+): Promise<AssetVersionStatus> {
+  const { data } = await api.post<AssetVersionStatus>(
+    `/assets/${assetId}/versions/${versionId}/retry-preview`,
   );
   return data;
 }
 
 export async function retryAssetFaces(
   assetId: string,
-): Promise<AssetStatusResponse> {
-  const { data } = await api.post<AssetStatusResponse>(
-    `/assets/${assetId}/retry-faces`,
+  versionId: string,
+): Promise<AssetVersionStatus> {
+  const { data } = await api.post<AssetVersionStatus>(
+    `/assets/${assetId}/versions/${versionId}/retry-faces`,
   );
   return data;
 }
@@ -176,19 +199,28 @@ export async function retryAssetFaces(
 export interface AssetMetadata {
   version_id: string | null;
   version_number: number | null;
+  base_version_id: string | null;
+  status: string | null;
+  preview_status: string | null;
+  faces_status: string | null;
+  preview_error: string | null;
+  faces_error: string | null;
+  recipe: Record<string, unknown> | null;
   exif: Record<string, unknown> | null;
   iptc: Record<string, unknown> | null;
   xmp: Record<string, unknown> | null;
   other: Record<string, unknown> | null;
   rating: number | null;
   keywords: string[];
+  rendered_width: number | null;
+  rendered_height: number | null;
+  is_identity_source: boolean | null;
   created_at: string | null;
 }
 
 export interface AssetMetadataResponse {
   id: string;
   title: string | null;
-  status: AssetStatus;
   created_at: string;
   updated_at: string | null;
   metadata: AssetMetadata | null;

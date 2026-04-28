@@ -136,14 +136,16 @@ export default function ImportPage() {
   const canClose = useMemo(() => {
     if (!activeBatch || activeBatch.status !== 'uploading') return false;
     if (activeAssets.length === 0) return false;
-    return activeAssets.every(
-      (a) => a.preview_status === 'completed' || a.preview_status === 'failed',
-    );
+    return activeAssets.every((a) => {
+      const p = a.version?.preview_status ?? 'pending';
+      return p === 'completed' || p === 'failed';
+    });
   }, [activeBatch, activeAssets]);
 
-  const hasQueuedPreview = activeAssets.some(
-    (a) => a.preview_status === 'pending' || a.preview_status === 'processing',
-  );
+  const hasQueuedPreview = activeAssets.some((a) => {
+    const p = a.version?.preview_status ?? 'pending';
+    return p === 'pending' || p === 'processing';
+  });
 
   const handleClose = useCallback(async () => {
     if (!batchId || !canClose || isClosing) return;

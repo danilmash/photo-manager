@@ -107,7 +107,10 @@ function hasNonFinalAsset(assets: AssetListItem[] | undefined): boolean {
   // Пустой список не значит «все ассеты в финале»: партия только создана,
   // файлы ещё грузятся или ответ API ещё не пришёл — поллинг должен жить.
   if (!assets || assets.length === 0) return true;
-  return assets.some((a) => !FINAL_ASSET_STATUSES.has(a.status));
+  return assets.some((a) => {
+    const st = a.version?.status;
+    return st === undefined || st === null || !FINAL_ASSET_STATUSES.has(st);
+  });
 }
 
 function upsertBatch(
@@ -258,17 +261,31 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
         });
 
         // Добавляем плейсхолдер в сетку, чтобы пользователь сразу увидел плитку.
+        const now = new Date().toISOString();
         const placeholder: AssetListItem = {
           asset_id: res.asset_id,
           title: res.filename,
-          status: (res.status as AssetListItem['status']) ?? 'uploaded',
-          preview_status: 'pending',
-          faces_status: 'pending',
-          created_at: new Date().toISOString(),
-          thumbnail_file_id: null,
-          thumbnail_url: null,
-          preview_file_id: null,
-          preview_url: null,
+          created_at: now,
+          updated_at: now,
+          version: {
+            id: res.version_id,
+            version_number: res.version_number,
+            base_version_id: null,
+            status: res.status,
+            preview_status: res.preview_status,
+            faces_status: res.faces_status,
+            preview_error: res.preview_error,
+            faces_error: res.faces_error,
+            recipe: {},
+            rendered_width: null,
+            rendered_height: null,
+            is_identity_source: false,
+            preview_file_id: null,
+            preview_url: null,
+            thumbnail_file_id: null,
+            thumbnail_url: null,
+            created_at: now,
+          },
         };
         set((state) => {
           const current = state.assetsByBatch[batchId] ?? [];
@@ -359,7 +376,9 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
         // среди ассетов появляются финальные (ready/partial_error).
         if (
           assets?.some(
-            (a) => a.status === 'ready' || a.status === 'partial_error',
+            (a) =>
+              a.version?.status === 'ready' ||
+              a.version?.status === 'partial_error',
           )
         ) {
           maybeRefreshHomeFeed();

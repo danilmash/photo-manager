@@ -14,7 +14,8 @@ import PersonsStrip from '../../components/ui/PersonsStrip';
 
 /** Миниатюра уже есть после фазы preview; общий status может быть processing (ML). */
 function canShowLibraryThumb(item: AssetListItem): boolean {
-  return item.preview_status === 'completed' && !!item.thumbnail_url;
+  const v = item.version;
+  return v?.preview_status === 'completed' && !!v?.thumbnail_url;
 }
 
 export default function HomePage() {
@@ -98,12 +99,12 @@ export default function HomePage() {
                     <>
                       <img
                         className={styles.img}
-                        src={item.thumbnail_url!}
+                        src={item.version!.thumbnail_url!}
                         alt=""
                         loading="lazy"
                         decoding="async"
                       />
-                      {item.status !== 'ready' && photoBadge && (
+                      {item.version?.status !== 'ready' && photoBadge && (
                         <PhotoStateBadge
                           variant={photoBadge}
                           className={styles['state-badge']}

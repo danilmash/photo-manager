@@ -61,9 +61,10 @@ export default function PhotoStateBadge({
  * отдельный бейдж не нужен (например, финальные состояния или ошибка превью).
  */
 export function resolvePhotoStateBadgeVariant(
-  item: Pick<AssetListItem, 'preview_status' | 'faces_status'>,
+  item: AssetListItem,
 ): PhotoStateBadgeVariant | null {
-  const { preview_status: preview, faces_status: faces } = item;
+  const preview = item.version?.preview_status ?? 'pending';
+  const faces = item.version?.faces_status ?? 'pending';
 
   if (preview === 'pending' || preview === 'processing') {
     return 'processing';

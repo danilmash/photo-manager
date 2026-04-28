@@ -22,7 +22,10 @@ function isPreviewInFlight(status: TaskStatus): boolean {
 }
 
 function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileState {
-  if (asset.preview_status === 'failed') {
+  const preview = asset.version?.preview_status ?? 'pending';
+  const faces = asset.version?.faces_status ?? 'pending';
+
+  if (preview === 'failed') {
     return {
       variant: 'error',
       photoBadge: null,
@@ -31,7 +34,7 @@ function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileSt
     };
   }
 
-  if (isPreviewInFlight(asset.preview_status)) {
+  if (isPreviewInFlight(preview)) {
     return {
       variant: 'skeleton',
       photoBadge: 'processing',
@@ -40,8 +43,8 @@ function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileSt
     };
   }
 
-  const hasThumb = !!asset.thumbnail_url;
-  const facesFailed = asset.faces_status === 'failed';
+  const hasThumb = !!asset.version?.thumbnail_url;
+  const facesFailed = faces === 'failed';
   const photoBadge = resolvePhotoStateBadgeVariant(asset);
 
   return {
@@ -74,10 +77,10 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
 
         const tile = (
           <div className={styles.tile}>
-            {state.variant === 'thumb' && asset.thumbnail_url ? (
+            {state.variant === 'thumb' && asset.version?.thumbnail_url ? (
               <img
                 className={styles.img}
-                src={asset.thumbnail_url}
+                src={asset.version.thumbnail_url}
                 alt={asset.title ?? ''}
                 loading="lazy"
                 decoding="async"

@@ -131,7 +131,8 @@ export default function PhotoViewer({
   const currentPhoto = photos[currentIndex];
 
   const photoSrc = useMemo(() => {
-    return currentPhoto?.preview_url || currentPhoto?.thumbnail_url || '';
+    const v = currentPhoto?.version;
+    return v?.preview_url || v?.thumbnail_url || '';
   }, [currentPhoto]);
 
   const currentViewer = currentPhoto ? viewerById[currentPhoto.asset_id] ?? null : null;

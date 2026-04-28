@@ -1,88 +1,56 @@
-from pydantic import BaseModel
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from app.faces.schemas import FaceDetectionSchema
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class FileSchema(BaseModel):
-    id: UUID
-    filename: str
-    mime_type: str
-    width: int | None
-    height: int | None
-    size_bytes: int
-    path: str
-    purpose: str
+class RecipeCropSchema(BaseModel):
+    x: float = Field(default=0.0, ge=0.0, le=1.0)
+    y: float = Field(default=0.0, ge=0.0, le=1.0)
+    w: float = Field(default=1.0, ge=0.0, le=1.0)
+    h: float = Field(default=1.0, ge=0.0, le=1.0)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(extra="forbid")
 
-
-class AssetVersionSchema(BaseModel):
-    id: UUID
-    version_number: int
-    recipe: dict
-    exif: dict | None
-    iptc: dict | None
-    xmp: dict | None
-    other: dict | None
-    rating: int | None
-    keywords: list[str]
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "RecipeCropSchema":
+        if self.x + self.w > 1.0:
+            raise ValueError("crop.x + crop.w must be <= 1")
+        if self.y + self.h > 1.0:
+            raise ValueError("crop.y + crop.h must be <= 1")
+        return self
 
 
-class AssetSchema(BaseModel):
-    id: UUID
-    title: str | None
-    status: str
-    created_at: datetime
-    updated_at: datetime
+class PhotoRecipeSchema(BaseModel):
+    crop: RecipeCropSchema = Field(default_factory=RecipeCropSchema)
+    rotation_degrees: float = Field(default=0.0, ge=-180.0, le=180.0)
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
+    exposure: float = Field(default=0.0, ge=-100.0, le=100.0)
+    contrast: float = Field(default=0.0, ge=-100.0, le=100.0)
+    highlights: float = Field(default=0.0, ge=-100.0, le=100.0)
+    shadows: float = Field(default=0.0, ge=-100.0, le=100.0)
+    temperature: float = Field(default=0.0, ge=-100.0, le=100.0)
+    tint: float = Field(default=0.0, ge=-100.0, le=100.0)
+    saturation: float = Field(default=0.0, ge=-100.0, le=100.0)
+    sharpness: float = Field(default=0.0, ge=0.0, le=100.0)
+    vignette: float = Field(default=0.0, ge=0.0, le=100.0)
 
-    class Config:
-        from_attributes = True
-
-class AssetVersionDetailSchema(BaseModel):
-    id: UUID
-    version_number: int
-    face_detections: list[FaceDetectionSchema] | None
-    exif: dict | None
-    iptc: dict | None
-    xmp: dict | None
-    other: dict | None
-    rating: int | None
-    keywords: list[str]
-    created_at: datetime
+    model_config = ConfigDict(extra="forbid")
 
 
-class AssetDetailResponse(BaseModel):
-    id: UUID
-    title: str | None
-    status: str
-    created_at: datetime
-    updated_at: datetime
-    preview_file_id: UUID | None
-    preview_url: str | None
-    version: AssetVersionDetailSchema | None
+class AssetVersionCreateRequest(BaseModel):
+    recipe: PhotoRecipeSchema
+    base_version_id: UUID | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class AssetDetailSchema(AssetSchema):
-    file: FileSchema | None
-    version: AssetVersionSchema | None
-
-
-class UploadResponseSchema(BaseModel):
+class AssetVersionStatusSchema(BaseModel):
     asset_id: UUID
-    job_id: str
-    filename: str
-    status: str
-
-
-class AssetStatusSchema(BaseModel):
-    asset_id: UUID
+    version_id: UUID
+    version_number: int
     status: str
     preview_status: str
     faces_status: str
@@ -90,28 +58,49 @@ class AssetStatusSchema(BaseModel):
     faces_error: str | None = None
 
 
-class AssetListItemSchema(BaseModel):
-    asset_id: UUID
-    title: str | None
+class AssetVersionJobResponseSchema(AssetVersionStatusSchema):
+    job_id: str
+
+
+class UploadResponseSchema(AssetVersionJobResponseSchema):
+    filename: str
+
+
+class AssetVersionSummarySchema(BaseModel):
+    id: UUID
+    version_number: int
+    base_version_id: UUID | None = None
     status: str
     preview_status: str
     faces_status: str
+    preview_error: str | None = None
+    faces_error: str | None = None
+    recipe: dict[str, Any]
+    rendered_width: int | None = None
+    rendered_height: int | None = None
+    is_identity_source: bool
+    preview_file_id: UUID | None = None
+    preview_url: str | None = None
+    thumbnail_file_id: UUID | None = None
+    thumbnail_url: str | None = None
     created_at: datetime
-    thumbnail_file_id: UUID | None
-    thumbnail_url: str | None
-    preview_file_id: UUID | None
-    preview_url: str | None
+
+
+class AssetListItemSchema(BaseModel):
+    asset_id: UUID
+    title: str | None
+    created_at: datetime
+    updated_at: datetime
+    version: AssetVersionSummarySchema | None
 
 
 class AssetListResponseSchema(BaseModel):
     items: list[AssetListItemSchema]
     next_cursor: str | None
 
-from datetime import datetime
-from uuid import UUID
-from typing import Any
 
-from pydantic import BaseModel
+class AssetVersionHistoryResponseSchema(BaseModel):
+    items: list[AssetVersionSummarySchema]
 
 
 class AssetPhotoInfoSchema(BaseModel):
@@ -129,22 +118,7 @@ class AssetPhotoInfoSchema(BaseModel):
     shutter_speed: Any | None = None
     focal_length: Any | None = None
     rating: int | None = None
-    keywords: list[str] = []
-
-
-class AssetViewerFaceSchema(BaseModel):
-    id: UUID
-    identity_id: UUID | None = None
-    person_id: UUID | None = None
-    person_name: str | None = None
-    bbox: Any | None = None
-    confidence: float | None = None
-    quality_score: float | None = None
-    is_reference: bool = False
-    assignment_source: str | None = None
-    review_required: bool = True
-    review_state: str | None = None
-    candidates: list["AssetViewerFacePersonCandidateSchema"] = []
+    keywords: list[str] = Field(default_factory=list)
 
 
 class AssetViewerFacePersonCandidateSchema(BaseModel):
@@ -155,18 +129,28 @@ class AssetViewerFacePersonCandidateSchema(BaseModel):
     score: float
 
 
+class AssetViewerFaceSchema(BaseModel):
+    id: UUID
+    asset_version_id: UUID
+    identity_id: UUID | None = None
+    person_id: UUID | None = None
+    person_name: str | None = None
+    bbox: Any | None = None
+    confidence: float | None = None
+    quality_score: float | None = None
+    is_reference: bool = False
+    assignment_source: str | None = None
+    review_required: bool = True
+    review_state: str | None = None
+    candidates: list[AssetViewerFacePersonCandidateSchema] = Field(default_factory=list)
+
+
 class AssetViewerResponseSchema(BaseModel):
     id: UUID
-    title: str
-    status: str
-    preview_status: str
-    faces_status: str
-    preview_error: str | None = None
-    faces_error: str | None = None
+    title: str | None
     created_at: datetime
     updated_at: datetime | None = None
-    preview_file_id: UUID | None = None
-    preview_url: str | None = None
+    version: AssetVersionSummarySchema | None
     photo: AssetPhotoInfoSchema
     faces: list[AssetViewerFaceSchema]
     faces_count: int
@@ -175,19 +159,28 @@ class AssetViewerResponseSchema(BaseModel):
 class AssetMetadataSchema(BaseModel):
     version_id: UUID | None = None
     version_number: int | None = None
+    base_version_id: UUID | None = None
+    status: str | None = None
+    preview_status: str | None = None
+    faces_status: str | None = None
+    preview_error: str | None = None
+    faces_error: str | None = None
+    recipe: dict[str, Any] | None = None
     exif: dict[str, Any] | None = None
     iptc: dict[str, Any] | None = None
     xmp: dict[str, Any] | None = None
     other: dict[str, Any] | None = None
     rating: int | None = None
-    keywords: list[str] = []
+    keywords: list[str] = Field(default_factory=list)
+    rendered_width: int | None = None
+    rendered_height: int | None = None
+    is_identity_source: bool | None = None
     created_at: datetime | None = None
 
 
 class AssetMetadataResponseSchema(BaseModel):
     id: UUID
-    title: str
-    status: str
+    title: str | None
     created_at: datetime
     updated_at: datetime | None = None
     metadata: AssetMetadataSchema | None = None

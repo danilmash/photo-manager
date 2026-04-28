@@ -5,6 +5,7 @@ from uuid import UUID
 import numpy as np
 from sqlalchemy.orm import Session
 
+from app.assets.models import AssetVersion
 from app.faces.models import (
     FACE_REVIEW_STATE_AUTO_ASSIGNED,
     FACE_REVIEW_STATE_PENDING_REVIEW,
@@ -18,19 +19,22 @@ MATCH_SCORE_THRESHOLD = 0.55
 MATCH_MARGIN_THRESHOLD = 0.10
 MAX_CANDIDATES = 5
 PERSON_IDENTITY_SCORE_THRESHOLD = 0.55
+MANUAL_TRANSFER_SCORE_THRESHOLD = 0.75
 
 
 def recalculate_centroid(db: Session, identity_id: UUID) -> None:
-    """Recompute the L2-normalised centroid embedding for a FaceIdentity
-    using only ``is_reference=True`` detections.
-    """
     identity = db.query(FaceIdentity).filter_by(id=identity_id).first()
     if not identity:
         return
 
     detections = (
         db.query(FaceDetection)
-        .filter_by(identity_id=identity_id, is_reference=True)
+        .join(AssetVersion, FaceDetection.asset_version_id == AssetVersion.id)
+        .filter(
+            FaceDetection.identity_id == identity_id,
+            FaceDetection.is_reference.is_(True),
+            AssetVersion.is_identity_source.is_(True),
+        )
         .all()
     )
 
@@ -50,7 +54,6 @@ def recalculate_centroid(db: Session, identity_id: UUID) -> None:
 
 
 def compute_identity_score(embedding: list[float], centroid: list[float]) -> float:
-    """Cosine similarity between a face embedding and an identity centroid."""
     a = np.array(embedding, dtype=np.float64)
     b = np.array(centroid, dtype=np.float64)
     norm_a = np.linalg.norm(a)
@@ -60,10 +63,6 @@ def compute_identity_score(embedding: list[float], centroid: list[float]) -> flo
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-# ---------------------------------------------------------------------------
-# Matching pipeline
-# ---------------------------------------------------------------------------
-
 def _accept_detection(
     db: Session,
     detection: FaceDetection,
@@ -71,7 +70,6 @@ def _accept_detection(
     score: float,
     source: str,
 ) -> None:
-    """Link a detection to an identity and mark it as reference."""
     detection.identity_id = identity.id
     detection.identity_score = score
     detection.assignment_source = source
@@ -88,8 +86,6 @@ def _accept_detection(
 
 
 def match_detection(db: Session, detection: FaceDetection) -> None:
-    """Match a single unmatched detection against all known identities."""
-
     identities = (
         db.query(FaceIdentity)
         .filter(FaceIdentity.centroid_embedding.isnot(None))
@@ -110,12 +106,14 @@ def match_detection(db: Session, detection: FaceDetection) -> None:
     top = scored[:MAX_CANDIDATES]
 
     for rank, (ident, s) in enumerate(top, start=1):
-        db.add(FaceCandidate(
-            face_detection_id=detection.id,
-            identity_id=ident.id,
-            rank=rank,
-            score=round(s, 6),
-        ))
+        db.add(
+            FaceCandidate(
+                face_detection_id=detection.id,
+                identity_id=ident.id,
+                rank=rank,
+                score=round(s, 6),
+            )
+        )
 
     best_identity, best_score = top[0]
     margin = best_score - top[1][1] if len(top) >= 2 else best_score
@@ -133,13 +131,11 @@ def match_detection(db: Session, detection: FaceDetection) -> None:
         margin >= MATCH_MARGIN_THRESHOLD or top_same_person
     ):
         _accept_detection(db, detection, best_identity, best_score, "model")
-    else:
-        if best_score < MATCH_SCORE_THRESHOLD:
-            _create_new_identity(db, detection)
+    elif best_score < MATCH_SCORE_THRESHOLD:
+        _create_new_identity(db, detection)
 
 
 def _create_new_identity(db: Session, detection: FaceDetection) -> FaceIdentity:
-    """Create an unresolved identity and mark detection for user review."""
     emb = list(detection.embedding)
     arr = np.array(emb, dtype=np.float64)
     norm = np.linalg.norm(arr)
@@ -171,7 +167,6 @@ def _create_identity_for_person(
     person: Person,
     source: str = "user",
 ) -> FaceIdentity:
-    """Create a new identity under an existing person and assign detection."""
     emb = list(detection.embedding)
     arr = np.array(emb, dtype=np.float64)
     norm = np.linalg.norm(arr)
@@ -203,11 +198,6 @@ def _assign_existing_identity_to_person(
     person: Person,
     source: str = "user",
 ) -> FaceIdentity:
-    """Bind an already assigned person-less identity to a person as-is.
-
-    This preserves the current identity for the whole cluster instead of
-    moving only the selected detection into another identity.
-    """
     identity.person_id = person.id
 
     if identity.cover_face_id is None:
@@ -241,11 +231,6 @@ def assign_detection_to_best_person_identity(
     source: str = "user",
     min_score_to_reuse: float = PERSON_IDENTITY_SCORE_THRESHOLD,
 ) -> FaceIdentity:
-    """Assign detection to the best identity of a person or create a new one.
-
-    If the best available identity centroid score is below ``min_score_to_reuse``,
-    a new identity is created under the given person.
-    """
     person = db.query(Person).filter_by(id=person_id).first()
     if not person:
         raise ValueError("Person not found")
@@ -262,7 +247,6 @@ def assign_detection_to_best_person_identity(
         )
 
     emb = list(detection.embedding)
-
     scored: list[tuple[FaceIdentity, float]] = []
     for ident in person.identities:
         if ident.centroid_embedding is None:
@@ -273,20 +257,29 @@ def assign_detection_to_best_person_identity(
     selected_identity: FaceIdentity
     selected_score: float
     if not scored:
-        selected_identity = _create_identity_for_person(db, detection, person, source=source)
+        selected_identity = _create_identity_for_person(
+            db,
+            detection,
+            person,
+            source=source,
+        )
         selected_score = 1.0
     else:
         scored.sort(key=lambda item: item[1], reverse=True)
         best_identity, best_score = scored[0]
         if best_score < min_score_to_reuse:
-            selected_identity = _create_identity_for_person(db, detection, person, source=source)
+            selected_identity = _create_identity_for_person(
+                db,
+                detection,
+                person,
+                source=source,
+            )
             selected_score = 1.0
         else:
             _accept_detection(db, detection, best_identity, best_score, source)
             selected_identity = best_identity
             selected_score = best_score
 
-    # Keep explicit rounded value aligned with existing API responses.
     detection.identity_score = round(selected_score, 6)
 
     if old_identity_id and old_identity_id != selected_identity.id:
@@ -295,12 +288,93 @@ def assign_detection_to_best_person_identity(
     return selected_identity
 
 
-def match_detections_for_asset(db: Session, asset_id: str | UUID) -> None:
-    """Run matching for all fresh (unmatched) detections of an asset."""
+def transfer_user_assignments_from_base_version(
+    db: Session,
+    target_version_id: UUID,
+    base_version_id: UUID | None,
+    *,
+    min_score: float = MANUAL_TRANSFER_SCORE_THRESHOLD,
+) -> None:
+    if base_version_id is None:
+        return
+
+    source_detections = (
+        db.query(FaceDetection)
+        .filter(
+            FaceDetection.asset_version_id == base_version_id,
+            FaceDetection.identity_id.isnot(None),
+            FaceDetection.assignment_source == "user",
+            FaceDetection.review_required.is_(False),
+        )
+        .all()
+    )
+    if not source_detections:
+        return
+
+    target_detections = (
+        db.query(FaceDetection)
+        .filter(
+            FaceDetection.asset_version_id == target_version_id,
+            FaceDetection.identity_id.is_(None),
+            FaceDetection.model_identity_id.is_(None),
+        )
+        .all()
+    )
+    if not target_detections:
+        return
+
+    scored_pairs: list[tuple[float, FaceDetection, FaceDetection]] = []
+    for source in source_detections:
+        for target in target_detections:
+            score = compute_identity_score(
+                list(source.embedding),
+                list(target.embedding),
+            )
+            scored_pairs.append((score, source, target))
+
+    scored_pairs.sort(key=lambda item: item[0], reverse=True)
+    matched_source_ids: set[UUID] = set()
+    matched_target_ids: set[UUID] = set()
+
+    for score, source, target in scored_pairs:
+        if score < min_score:
+            break
+        if source.id in matched_source_ids or target.id in matched_target_ids:
+            continue
+
+        target.identity_id = source.identity_id
+        target.assignment_source = "user"
+        target.is_reference = source.is_reference
+        target.review_required = False
+        target.review_state = source.review_state
+        target.reviewed_by_user_id = source.reviewed_by_user_id
+        target.reviewed_at = source.reviewed_at
+
+        identity = source.identity or (
+            db.query(FaceIdentity).filter_by(id=source.identity_id).first()
+        )
+        if identity and identity.centroid_embedding is not None:
+            target.identity_score = round(
+                compute_identity_score(
+                    list(target.embedding),
+                    list(identity.centroid_embedding),
+                ),
+                6,
+            )
+        else:
+            target.identity_score = source.identity_score or round(score, 6)
+
+        matched_source_ids.add(source.id)
+        matched_target_ids.add(target.id)
+
+    db.flush()
+
+
+def match_detections_for_version(db: Session, asset_version_id: UUID | str) -> None:
     detections = (
         db.query(FaceDetection)
         .filter(
-            FaceDetection.asset_id == str(asset_id),
+            FaceDetection.asset_version_id == str(asset_version_id),
             FaceDetection.identity_id.is_(None),
             FaceDetection.model_identity_id.is_(None),
         )
@@ -311,3 +385,55 @@ def match_detections_for_asset(db: Session, asset_id: str | UUID) -> None:
     for det in detections:
         match_detection(db, det)
         db.flush()
+
+
+def match_detections_for_asset(db: Session, asset_id: UUID | str) -> None:
+    version = (
+        db.query(AssetVersion)
+        .filter(AssetVersion.asset_id == str(asset_id))
+        .order_by(AssetVersion.version_number.desc())
+        .first()
+    )
+    if version:
+        match_detections_for_version(db, version.id)
+
+
+def promote_identity_source_version(db: Session, version_id: UUID | str) -> None:
+    version = db.query(AssetVersion).filter_by(id=version_id).first()
+    if not version:
+        return
+
+    existing_sources = (
+        db.query(AssetVersion)
+        .filter(
+            AssetVersion.asset_id == version.asset_id,
+            AssetVersion.is_identity_source.is_(True),
+        )
+        .all()
+    )
+
+    affected_version_ids: set[UUID] = {version.id}
+    for source_version in existing_sources:
+        if source_version.id != version.id:
+            source_version.is_identity_source = False
+        affected_version_ids.add(source_version.id)
+
+    version.is_identity_source = True
+    db.flush()
+
+    identity_ids = {
+        row[0]
+        for row in (
+            db.query(FaceDetection.identity_id)
+            .filter(
+                FaceDetection.asset_version_id.in_(affected_version_ids),
+                FaceDetection.identity_id.isnot(None),
+                FaceDetection.is_reference.is_(True),
+            )
+            .all()
+        )
+        if row[0] is not None
+    }
+
+    for identity_id in identity_ids:
+        recalculate_centroid(db, identity_id)

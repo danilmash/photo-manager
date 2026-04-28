@@ -1,42 +1,45 @@
-import uuid as uuid_mod
-import shutil
 import base64
+import shutil
+import uuid as uuid_mod
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Form, UploadFile, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
+from sqlalchemy import and_
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select
 
-from app.database import get_db
-from app.users.dependencies import get_current_user
-from app.users.models import User
-from app.config import settings
 from app.assets.models import (
-    ASSET_STATUS_ERROR,
-    ASSET_STATUS_UPLOADED,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     TASK_STATUS_PENDING,
-    apply_asset_status,
+    VERSION_STATUS_UPLOADED,
     Asset,
     AssetVersion,
     File as AssetFileModel,
+    apply_version_status,
 )
+from app.assets.recipes import normalize_recipe
 from app.assets.schemas import (
-    UploadResponseSchema,
-    AssetStatusSchema,
     AssetListItemSchema,
     AssetListResponseSchema,
-    AssetViewerResponseSchema,
+    AssetMetadataResponseSchema,
+    AssetMetadataSchema,
+    AssetPhotoInfoSchema,
+    AssetVersionCreateRequest,
+    AssetVersionHistoryResponseSchema,
+    AssetVersionJobResponseSchema,
+    AssetVersionStatusSchema,
+    AssetVersionSummarySchema,
     AssetViewerFacePersonCandidateSchema,
     AssetViewerFaceSchema,
-    AssetPhotoInfoSchema,
-    AssetMetadataSchema,
-    AssetMetadataResponseSchema,
+    AssetViewerResponseSchema,
+    UploadResponseSchema,
 )
+from app.assets.tasks import process_asset_ml, process_asset_preview
+from app.config import settings
+from app.database import get_db
 from app.faces.models import FaceCandidate, FaceDetection, FaceIdentity
 from app.import_batches.models import (
     IMPORT_BATCH_STATUS_PENDING_REVIEW,
@@ -44,7 +47,8 @@ from app.import_batches.models import (
     IMPORT_BATCH_STATUS_UPLOADING,
     ImportBatch,
 )
-from app.assets.tasks import process_asset_ml, process_asset_preview
+from app.users.dependencies import get_current_user
+from app.users.models import User
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
@@ -85,14 +89,10 @@ def _get_asset_or_404(db: Session, asset_id: uuid_mod.UUID) -> Asset:
     return asset
 
 
-def _get_latest_file(
-    db: Session,
-    asset_id: uuid_mod.UUID,
-    purpose: str,
-) -> AssetFileModel | None:
+def _get_original_file(db: Session, asset_id: uuid_mod.UUID) -> AssetFileModel | None:
     return (
         db.query(AssetFileModel)
-        .filter_by(asset_id=asset_id, purpose=purpose)
+        .filter_by(asset_id=asset_id, purpose="original")
         .order_by(AssetFileModel.created_at.desc())
         .first()
     )
@@ -110,6 +110,91 @@ def _get_latest_version(
     )
 
 
+def _get_version_or_404(
+    db: Session,
+    asset_id: uuid_mod.UUID,
+    *,
+    version_id: uuid_mod.UUID | None = None,
+    version_number: int | None = None,
+) -> AssetVersion:
+    if version_id is not None and version_number is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нельзя передавать одновременно version_id и version_number",
+        )
+
+    query = db.query(AssetVersion).filter(AssetVersion.asset_id == asset_id)
+    if version_id is not None:
+        version = query.filter(AssetVersion.id == version_id).first()
+    elif version_number is not None:
+        version = query.filter(AssetVersion.version_number == version_number).first()
+    else:
+        version = query.order_by(AssetVersion.version_number.desc()).first()
+
+    if not version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Версия ассета не найдена",
+        )
+    return version
+
+
+def _get_version_files_map(
+    db: Session,
+    version_ids: list[uuid_mod.UUID],
+) -> dict[uuid_mod.UUID, dict[str, AssetFileModel]]:
+    if not version_ids:
+        return {}
+
+    files = (
+        db.query(AssetFileModel)
+        .filter(
+            AssetFileModel.asset_version_id.in_(version_ids),
+            AssetFileModel.purpose.in_(("preview", "thumbnail")),
+        )
+        .all()
+    )
+    files_map: dict[uuid_mod.UUID, dict[str, AssetFileModel]] = {}
+    for file_record in files:
+        if file_record.asset_version_id is None:
+            continue
+        files_map.setdefault(file_record.asset_version_id, {})[file_record.purpose] = (
+            file_record
+        )
+    return files_map
+
+
+def _get_latest_versions_map(
+    db: Session,
+    asset_ids: list[uuid_mod.UUID],
+) -> dict[uuid_mod.UUID, AssetVersion]:
+    if not asset_ids:
+        return {}
+
+    latest_sq = (
+        db.query(
+            AssetVersion.asset_id.label("asset_id"),
+            AssetVersion.version_number.label("version_number"),
+        )
+        .filter(AssetVersion.asset_id.in_(asset_ids))
+        .distinct(AssetVersion.asset_id)
+        .order_by(AssetVersion.asset_id, AssetVersion.version_number.desc())
+        .subquery()
+    )
+    versions = (
+        db.query(AssetVersion)
+        .join(
+            latest_sq,
+            and_(
+                AssetVersion.asset_id == latest_sq.c.asset_id,
+                AssetVersion.version_number == latest_sq.c.version_number,
+            ),
+        )
+        .all()
+    )
+    return {version.asset_id: version for version in versions}
+
+
 def _normalize_keywords(value: Any) -> list[str]:
     if value is None:
         return []
@@ -119,28 +204,49 @@ def _normalize_keywords(value: Any) -> list[str]:
 
 
 def _deep_get(data: dict[str, Any] | None, *paths: str) -> Any | None:
-    """
-    Пример:
-    _deep_get(exif, "DateTimeOriginal", "EXIF.DateTimeOriginal", "IFD0.Model")
-    """
     if not isinstance(data, dict):
         return None
 
     for path in paths:
         current: Any = data
         found = True
-
         for key in path.split("."):
             if isinstance(current, dict) and key in current:
                 current = current[key]
             else:
                 found = False
                 break
-
         if found and current not in (None, "", [], {}):
             return current
-
     return None
+
+
+def _build_version_summary(
+    version: AssetVersion,
+    version_files: dict[str, AssetFileModel] | None = None,
+) -> AssetVersionSummarySchema:
+    version_files = version_files or {}
+    preview = version_files.get("preview")
+    thumbnail = version_files.get("thumbnail")
+    return AssetVersionSummarySchema(
+        id=version.id,
+        version_number=version.version_number,
+        base_version_id=version.base_version_id,
+        status=version.status,
+        preview_status=version.preview_status,
+        faces_status=version.faces_status,
+        preview_error=version.preview_error,
+        faces_error=version.faces_error,
+        recipe=normalize_recipe(version.recipe),
+        rendered_width=version.rendered_width,
+        rendered_height=version.rendered_height,
+        is_identity_source=version.is_identity_source,
+        preview_file_id=preview.id if preview else None,
+        preview_url=_build_file_url(preview.id if preview else None),
+        thumbnail_file_id=thumbnail.id if thumbnail else None,
+        thumbnail_url=_build_file_url(thumbnail.id if thumbnail else None),
+        created_at=version.created_at,
+    )
 
 
 def _build_photo_info(
@@ -154,18 +260,28 @@ def _build_photo_info(
         filename=original_file.filename if original_file else None,
         mime_type=original_file.mime_type if original_file else None,
         size_bytes=original_file.size_bytes if original_file else None,
-        width=_deep_get(
-            exif,
-            "ImageWidth",
-            "EXIF.ExifImageWidth",
-            "Composite.ImageWidth",
-        ) or _deep_get(other, "width"),
-        height=_deep_get(
-            exif,
-            "ImageHeight",
-            "EXIF.ExifImageHeight",
-            "Composite.ImageHeight",
-        ) or _deep_get(other, "height"),
+        width=(
+            version.rendered_width
+            if version and version.rendered_width is not None
+            else _deep_get(
+                exif,
+                "ImageWidth",
+                "EXIF.ExifImageWidth",
+                "Composite.ImageWidth",
+            )
+            or _deep_get(other, "width")
+        ),
+        height=(
+            version.rendered_height
+            if version and version.rendered_height is not None
+            else _deep_get(
+                exif,
+                "ImageHeight",
+                "EXIF.ExifImageHeight",
+                "Composite.ImageHeight",
+            )
+            or _deep_get(other, "height")
+        ),
         taken_at=_deep_get(
             exif,
             "DateTimeOriginal",
@@ -181,6 +297,19 @@ def _build_photo_info(
         focal_length=_deep_get(exif, "FocalLength", "EXIF.FocalLength"),
         rating=version.rating if version else None,
         keywords=_normalize_keywords(version.keywords if version else None),
+    )
+
+
+def _build_version_status_schema(version: AssetVersion) -> AssetVersionStatusSchema:
+    return AssetVersionStatusSchema(
+        asset_id=version.asset_id,
+        version_id=version.id,
+        version_number=version.version_number,
+        status=version.status,
+        preview_status=version.preview_status,
+        faces_status=version.faces_status,
+        preview_error=version.preview_error,
+        faces_error=version.faces_error,
     )
 
 
@@ -217,6 +346,7 @@ def upload_asset(
 
     asset_id = uuid_mod.uuid4()
     file_id = uuid_mod.uuid4()
+    version_id = uuid_mod.uuid4()
     filename = file.filename or str(file_id)
 
     asset_dir = Path(settings.storage_root) / "originals" / str(asset_id)
@@ -232,7 +362,6 @@ def upload_asset(
     asset = Asset(
         id=asset_id,
         title=filename,
-        status=ASSET_STATUS_UPLOADED,
         owner_id=current_user.id,
         import_batch_id=batch.id if batch else None,
     )
@@ -245,17 +374,34 @@ def upload_asset(
         path=relative_path,
         purpose="original",
     )
+    version = AssetVersion(
+        id=version_id,
+        asset_id=asset_id,
+        version_number=1,
+        recipe={},
+        status=VERSION_STATUS_UPLOADED,
+        preview_status=TASK_STATUS_PENDING,
+        faces_status=TASK_STATUS_PENDING,
+        keywords=[],
+        is_identity_source=False,
+    )
     db.add(asset)
     db.add(file_record)
+    db.add(version)
     db.commit()
 
-    task = process_asset_preview.delay(str(asset_id), str(file_id))
-
+    task = process_asset_preview.delay(str(version.id))
     return UploadResponseSchema(
         asset_id=asset_id,
+        version_id=version.id,
+        version_number=version.version_number,
+        status=version.status,
+        preview_status=version.preview_status,
+        faces_status=version.faces_status,
+        preview_error=version.preview_error,
+        faces_error=version.faces_error,
         job_id=task.id,
         filename=filename,
-        status=ASSET_STATUS_UPLOADED,
     )
 
 
@@ -269,47 +415,9 @@ def list_assets(
 ):
     limit = max(1, min(limit, 200))
 
-    thumb_id_sq = (
-        select(AssetFileModel.id)
-        .where(
-            AssetFileModel.asset_id == Asset.id,
-            AssetFileModel.purpose == "thumbnail",
-        )
-        .order_by(AssetFileModel.created_at.desc())
-        .limit(1)
-        .correlate(Asset)
-        .scalar_subquery()
-    )
-
-    preview_id_sq = (
-        select(AssetFileModel.id)
-        .where(
-            AssetFileModel.asset_id == Asset.id,
-            AssetFileModel.purpose == "preview",
-        )
-        .order_by(AssetFileModel.created_at.desc())
-        .limit(1)
-        .correlate(Asset)
-        .scalar_subquery()
-    )
-
-    q = db.query(
-        Asset.id.label("asset_id"),
-        Asset.title,
-        Asset.status,
-        Asset.preview_status,
-        Asset.faces_status,
-        Asset.created_at,
-        thumb_id_sq.label("thumb_id"),
-        preview_id_sq.label("preview_id"),
-    ).order_by(Asset.created_at.desc(), Asset.id.desc())
-
+    q = db.query(Asset).order_by(Asset.created_at.desc(), Asset.id.desc())
     if batch_id is not None:
-        # Внутри партии показываем всё, включая импортируемые и ошибки:
-        # это контент ревью, пользователю важно увидеть любые проблемы.
         q = q.filter(Asset.import_batch_id == batch_id)
-    else:
-        q = q.filter(Asset.status != ASSET_STATUS_ERROR)
 
     if cursor:
         try:
@@ -329,32 +437,39 @@ def list_assets(
     has_more = len(rows) > limit
     rows = rows[:limit]
 
+    asset_ids = [asset.id for asset in rows]
+    latest_versions = _get_latest_versions_map(db, asset_ids)
+    version_files = _get_version_files_map(
+        db,
+        [version.id for version in latest_versions.values()],
+    )
+
     items: list[AssetListItemSchema] = []
-    for row in rows:
+    for asset in rows:
+        version = latest_versions.get(asset.id)
         items.append(
             AssetListItemSchema(
-                asset_id=row.asset_id,
-                title=row.title,
-                status=row.status,
-                preview_status=row.preview_status,
-                faces_status=row.faces_status,
-                created_at=row.created_at,
-                thumbnail_file_id=row.thumb_id,
-                thumbnail_url=_build_file_url(row.thumb_id),
-                preview_file_id=row.preview_id,
-                preview_url=_build_file_url(row.preview_id),
+                asset_id=asset.id,
+                title=asset.title,
+                created_at=asset.created_at,
+                updated_at=asset.updated_at,
+                version=(
+                    _build_version_summary(
+                        version,
+                        version_files.get(version.id, {}),
+                    )
+                    if version
+                    else None
+                ),
             )
         )
 
     next_cursor = None
     if has_more and rows:
         last_row = rows[-1]
-        next_cursor = _encode_cursor(last_row.created_at, last_row.asset_id)
+        next_cursor = _encode_cursor(last_row.created_at, last_row.id)
 
-    return AssetListResponseSchema(
-        items=items,
-        next_cursor=next_cursor,
-    )
+    return AssetListResponseSchema(items=items, next_cursor=next_cursor)
 
 
 @router.get("/files/{file_id}")
@@ -380,28 +495,116 @@ def get_asset_file(
     return FileResponse(path, media_type=f.mime_type, filename=f.filename)
 
 
-@router.get("/{asset_id}", response_model=AssetViewerResponseSchema)
-def get_asset_viewer(
+@router.post("/{asset_id}/versions", response_model=AssetVersionJobResponseSchema)
+def create_asset_version(
     asset_id: uuid_mod.UUID,
+    body: AssetVersionCreateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset_or_404(db, asset_id)
+    latest_version = _get_latest_version(db, asset_id)
 
-    preview = _get_latest_file(db, asset_id, "preview")
-    original = _get_latest_file(db, asset_id, "original")
-    version = _get_latest_version(db, asset_id)
+    base_version = None
+    if body.base_version_id is not None:
+        base_version = (
+            db.query(AssetVersion)
+            .filter_by(id=body.base_version_id, asset_id=asset.id)
+            .first()
+        )
+        if not base_version:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Базовая версия не найдена",
+            )
+    else:
+        base_version = latest_version
+
+    next_number = (latest_version.version_number + 1) if latest_version else 1
+    version = AssetVersion(
+        asset_id=asset.id,
+        base_version_id=base_version.id if base_version else None,
+        version_number=next_number,
+        recipe=body.recipe.model_dump(mode="json"),
+        status=VERSION_STATUS_UPLOADED,
+        preview_status=TASK_STATUS_PENDING,
+        faces_status=TASK_STATUS_PENDING,
+        exif=base_version.exif if base_version else None,
+        iptc=base_version.iptc if base_version else None,
+        xmp=base_version.xmp if base_version else None,
+        other=base_version.other if base_version else None,
+        rating=base_version.rating if base_version else None,
+        keywords=list(base_version.keywords or []) if base_version else [],
+        is_identity_source=False,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    task = process_asset_preview.delay(str(version.id))
+    return AssetVersionJobResponseSchema(
+        asset_id=asset.id,
+        version_id=version.id,
+        version_number=version.version_number,
+        status=version.status,
+        preview_status=version.preview_status,
+        faces_status=version.faces_status,
+        preview_error=version.preview_error,
+        faces_error=version.faces_error,
+        job_id=task.id,
+    )
+
+
+@router.get("/{asset_id}/versions", response_model=AssetVersionHistoryResponseSchema)
+def list_asset_versions(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_asset_or_404(db, asset_id)
+    versions = (
+        db.query(AssetVersion)
+        .filter_by(asset_id=asset_id)
+        .order_by(AssetVersion.version_number.desc())
+        .all()
+    )
+    files_map = _get_version_files_map(db, [version.id for version in versions])
+    return AssetVersionHistoryResponseSchema(
+        items=[
+            _build_version_summary(version, files_map.get(version.id, {}))
+            for version in versions
+        ]
+    )
+
+
+@router.get("/{asset_id}", response_model=AssetViewerResponseSchema)
+def get_asset_viewer(
+    asset_id: uuid_mod.UUID,
+    version_id: uuid_mod.UUID | None = Query(default=None),
+    version_number: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _get_asset_or_404(db, asset_id)
+    version = _get_version_or_404(
+        db,
+        asset_id,
+        version_id=version_id,
+        version_number=version_number,
+    )
+
+    version_files = _get_version_files_map(db, [version.id]).get(version.id, {})
+    original = _get_original_file(db, asset_id)
 
     detections = (
         db.query(FaceDetection)
         .options(
-            joinedload(FaceDetection.identity)
-            .joinedload(FaceIdentity.person),
+            joinedload(FaceDetection.identity).joinedload(FaceIdentity.person),
             joinedload(FaceDetection.candidates)
             .joinedload(FaceCandidate.identity)
             .joinedload(FaceIdentity.person),
         )
-        .filter(FaceDetection.asset_id == asset_id)
+        .filter(FaceDetection.asset_version_id == version.id)
         .order_by(FaceDetection.created_at.asc())
         .all()
     )
@@ -410,7 +613,10 @@ def get_asset_viewer(
     for det in detections:
         identity = det.identity
         person = identity.person if identity else None
-        grouped_candidates: dict[uuid_mod.UUID, AssetViewerFacePersonCandidateSchema] = {}
+        grouped_candidates: dict[
+            uuid_mod.UUID,
+            AssetViewerFacePersonCandidateSchema,
+        ] = {}
         for candidate in det.candidates:
             candidate_identity = candidate.identity
             candidate_person = candidate_identity.person if candidate_identity else None
@@ -430,38 +636,34 @@ def get_asset_viewer(
                 score=candidate.score,
             )
 
-        person_candidates = sorted(
-            grouped_candidates.values(),
-            key=lambda item: item.score,
-            reverse=True,
+        faces.append(
+            AssetViewerFaceSchema(
+                id=det.id,
+                asset_version_id=det.asset_version_id,
+                identity_id=identity.id if identity else None,
+                person_id=person.id if person else None,
+                person_name=person.name if person else None,
+                bbox=det.bbox,
+                confidence=det.confidence,
+                quality_score=det.quality_score,
+                is_reference=det.is_reference,
+                assignment_source=det.assignment_source,
+                review_required=det.review_required,
+                review_state=det.review_state,
+                candidates=sorted(
+                    grouped_candidates.values(),
+                    key=lambda item: item.score,
+                    reverse=True,
+                ),
+            )
         )
-        faces.append(AssetViewerFaceSchema(
-            id=det.id,
-            identity_id=identity.id if identity else None,
-            person_id=person.id if person else None,
-            person_name=person.name if person else None,
-            bbox=det.bbox,
-            confidence=det.confidence,
-            quality_score=det.quality_score,
-            is_reference=det.is_reference,
-            assignment_source=det.assignment_source,
-            review_required=det.review_required,
-            review_state=det.review_state,
-            candidates=person_candidates,
-        ))
 
     return AssetViewerResponseSchema(
         id=asset.id,
         title=asset.title,
-        status=asset.status,
-        preview_status=asset.preview_status,
-        faces_status=asset.faces_status,
-        preview_error=asset.preview_error,
-        faces_error=asset.faces_error,
         created_at=asset.created_at,
         updated_at=asset.updated_at,
-        preview_file_id=preview.id if preview else None,
-        preview_url=_build_file_url(preview.id if preview else None),
+        version=_build_version_summary(version, version_files),
         photo=_build_photo_info(version, original),
         faces=faces,
         faces_count=len(faces),
@@ -471,126 +673,138 @@ def get_asset_viewer(
 @router.get("/{asset_id}/metadata", response_model=AssetMetadataResponseSchema)
 def get_asset_metadata(
     asset_id: uuid_mod.UUID,
+    version_id: uuid_mod.UUID | None = Query(default=None),
+    version_number: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset_or_404(db, asset_id)
-    version = _get_latest_version(db, asset_id)
+    version = _get_version_or_404(
+        db,
+        asset_id,
+        version_id=version_id,
+        version_number=version_number,
+    )
 
-    metadata = None
-    if version:
-        metadata = AssetMetadataSchema(
-            version_id=version.id,
-            version_number=version.version_number,
-            exif=version.exif,
-            iptc=version.iptc,
-            xmp=version.xmp,
-            other=version.other,
-            rating=version.rating,
-            keywords=_normalize_keywords(version.keywords),
-            created_at=version.created_at,
-        )
+    metadata = AssetMetadataSchema(
+        version_id=version.id,
+        version_number=version.version_number,
+        base_version_id=version.base_version_id,
+        status=version.status,
+        preview_status=version.preview_status,
+        faces_status=version.faces_status,
+        preview_error=version.preview_error,
+        faces_error=version.faces_error,
+        recipe=normalize_recipe(version.recipe),
+        exif=version.exif,
+        iptc=version.iptc,
+        xmp=version.xmp,
+        other=version.other,
+        rating=version.rating,
+        keywords=_normalize_keywords(version.keywords),
+        rendered_width=version.rendered_width,
+        rendered_height=version.rendered_height,
+        is_identity_source=version.is_identity_source,
+        created_at=version.created_at,
+    )
 
     return AssetMetadataResponseSchema(
         id=asset.id,
         title=asset.title,
-        status=asset.status,
         created_at=asset.created_at,
         updated_at=asset.updated_at,
         metadata=metadata,
     )
 
 
-def _build_asset_status_schema(asset: Asset) -> AssetStatusSchema:
-    return AssetStatusSchema(
-        asset_id=asset.id,
-        status=asset.status,
-        preview_status=asset.preview_status,
-        faces_status=asset.faces_status,
-        preview_error=asset.preview_error,
-        faces_error=asset.faces_error,
-    )
-
-
-@router.get("/{asset_id}/status", response_model=AssetStatusSchema)
+@router.get("/{asset_id}/status", response_model=AssetVersionStatusSchema)
 def get_asset_status(
     asset_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _get_asset_or_404(db, asset_id)
+    _get_asset_or_404(db, asset_id)
+    version = _get_version_or_404(db, asset_id)
+    return _build_version_status_schema(version)
 
-    return _build_asset_status_schema(asset)
 
-
-@router.post("/{asset_id}/retry-preview", response_model=AssetStatusSchema)
+@router.post(
+    "/{asset_id}/versions/{version_id}/retry-preview",
+    response_model=AssetVersionStatusSchema,
+)
 def retry_asset_preview(
     asset_id: uuid_mod.UUID,
+    version_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _get_asset_or_404(db, asset_id)
+    _get_asset_or_404(db, asset_id)
+    version = _get_version_or_404(db, asset_id, version_id=version_id)
 
-    if asset.preview_status != TASK_STATUS_FAILED:
+    if version.preview_status != TASK_STATUS_FAILED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Повторить preview можно только у ассетов с "
-                f"preview_status='failed' (текущий: '{asset.preview_status}')"
+                "Повторить preview можно только у версий с "
+                f"preview_status='failed' (текущий: '{version.preview_status}')"
             ),
         )
 
-    original_file = _get_latest_file(db, asset.id, "original")
+    original_file = _get_original_file(db, asset_id)
     if not original_file:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Невозможно повторить preview: не найден оригинальный файл",
         )
 
-    asset.preview_status = TASK_STATUS_PENDING
-    asset.preview_error = None
-    apply_asset_status(asset)
+    version.preview_status = TASK_STATUS_PENDING
+    version.preview_error = None
+    version.faces_status = TASK_STATUS_PENDING
+    version.faces_error = None
+    apply_version_status(version)
     db.commit()
 
-    process_asset_preview.delay(str(asset.id), str(original_file.id))
-    return _build_asset_status_schema(asset)
+    process_asset_preview.delay(str(version.id))
+    return _build_version_status_schema(version)
 
 
-@router.post("/{asset_id}/retry-faces", response_model=AssetStatusSchema)
+@router.post(
+    "/{asset_id}/versions/{version_id}/retry-faces",
+    response_model=AssetVersionStatusSchema,
+)
 def retry_asset_faces(
     asset_id: uuid_mod.UUID,
+    version_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset_or_404(db, asset_id)
+    version = _get_version_or_404(db, asset_id, version_id=version_id)
 
-    if asset.faces_status != TASK_STATUS_FAILED:
+    if version.faces_status != TASK_STATUS_FAILED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Повторить faces можно только у ассетов с "
-                f"faces_status='failed' (текущий: '{asset.faces_status}')"
+                "Повторить faces можно только у версий с "
+                f"faces_status='failed' (текущий: '{version.faces_status}')"
             ),
         )
-    if asset.preview_status != TASK_STATUS_COMPLETED:
+    if version.preview_status != TASK_STATUS_COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Нельзя запускать faces без успешного preview",
         )
 
-    # Если партия уже ушла в pending_review, возвращаем её в processing —
-    # иначе _finalize_batch_if_done после нашего retry ничего не сделает и
-    # батч так и останется в pending_review с незаконченным ассетом.
     if asset.import_batch_id is not None:
         batch = db.query(ImportBatch).filter_by(id=asset.import_batch_id).first()
         if batch and batch.status == IMPORT_BATCH_STATUS_PENDING_REVIEW:
             batch.status = IMPORT_BATCH_STATUS_PROCESSING
             db.add(batch)
 
-    asset.faces_status = TASK_STATUS_PENDING
-    asset.faces_error = None
-    apply_asset_status(asset)
+    version.faces_status = TASK_STATUS_PENDING
+    version.faces_error = None
+    apply_version_status(version)
     db.commit()
 
-    process_asset_ml.delay(str(asset.id))
-    return _build_asset_status_schema(asset)
+    process_asset_ml.delay(str(version.id))
+    return _build_version_status_schema(version)

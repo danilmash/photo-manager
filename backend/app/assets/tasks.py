@@ -2,51 +2,57 @@ import datetime
 import uuid
 from pathlib import Path
 
-from sqlalchemy import func
+from sqlalchemy import and_, func
+from wand.color import Color
 from wand.image import Image
 
 from app.assets.ml_service import detect_faces
 from app.assets.models import (
-    ASSET_STATUS_ERROR,
-    ASSET_STATUS_PARTIAL_ERROR,
-    ASSET_STATUS_READY,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    TASK_STATUS_PENDING,
     TASK_STATUS_PROCESSING,
-    apply_asset_status,
+    VERSION_STATUS_ERROR,
+    VERSION_STATUS_PARTIAL_ERROR,
+    VERSION_STATUS_READY,
     Asset,
     AssetVersion,
     File,
+    apply_version_status,
 )
+from app.assets.recipes import normalize_recipe
 from app.celery_app import celery
 from app.config import settings
 from app.database import SessionLocal
 from app.faces.models import FaceDetection
-from app.faces.services import match_detections_for_asset
+from app.faces.services import (
+    match_detections_for_version,
+    promote_identity_source_version,
+    transfer_user_assignments_from_base_version,
+)
 from app.import_batches.models import (
     IMPORT_BATCH_STATUS_PENDING_REVIEW,
     IMPORT_BATCH_STATUS_PROCESSING,
+    IMPORT_BATCH_STATUS_UPLOADING,
     ImportBatch,
 )
-import app.users.models  # noqa: F401 — регистрация модели для relationships
+import app.users.models  # noqa: F401
 
 
-# Максимальная длина текста ошибки, которую сохраняем в preview_error/faces_error.
-# Ограничиваем, чтобы случайный traceback не распухал до мегабайтов в БД.
 ERROR_TEXT_LIMIT = 2000
-
 FACE_CONFIDENCE_THRESHOLD = 0.3
+
+PREVIEW_SPECS = [
+    {"purpose": "thumbnail", "long_side": 300, "quality": 80, "subdir": "thumbnails"},
+    {"purpose": "preview", "long_side": 1200, "quality": 85, "subdir": "previews"},
+]
+
 
 def _truncate_error(exc: BaseException) -> str:
     text = str(exc) or exc.__class__.__name__
     if len(text) > ERROR_TEXT_LIMIT:
         text = text[:ERROR_TEXT_LIMIT]
     return text
-
-PREVIEW_SPECS = [
-    {"purpose": "thumbnail", "long_side": 300,  "quality": 80, "subdir": "thumbnails"},
-    {"purpose": "preview",   "long_side": 1200, "quality": 85, "subdir": "previews"},
-]
 
 
 def _json_safe(value):
@@ -88,6 +94,99 @@ def _extract_metadata(img: Image) -> dict | None:
     return out or None
 
 
+def _apply_channel_shift(img: Image, channel: str, delta: float) -> None:
+    if delta > 0:
+        img.evaluate(operator="add", value=delta, channel=channel)
+    elif delta < 0:
+        img.evaluate(operator="subtract", value=abs(delta), channel=channel)
+
+
+def _apply_recipe(img: Image, recipe: dict) -> None:
+    if recipe["flip_horizontal"]:
+        img.flop()
+    if recipe["flip_vertical"]:
+        img.flip()
+
+    rotation_degrees = float(recipe["rotation_degrees"])
+    if abs(rotation_degrees) > 0.001:
+        img.rotate(rotation_degrees, background=Color("black"))
+
+    crop = recipe["crop"]
+    if crop["x"] > 0 or crop["y"] > 0 or crop["w"] < 1 or crop["h"] < 1:
+        left = int(round(img.width * crop["x"]))
+        top = int(round(img.height * crop["y"]))
+        width = max(1, int(round(img.width * crop["w"])))
+        height = max(1, int(round(img.height * crop["h"])))
+        left = max(0, min(left, max(img.width - 1, 0)))
+        top = max(0, min(top, max(img.height - 1, 0)))
+        width = max(1, min(width, img.width - left))
+        height = max(1, min(height, img.height - top))
+        img.crop(left=left, top=top, width=width, height=height, reset_coords=True)
+
+    exposure = float(recipe["exposure"])
+    saturation = float(recipe["saturation"])
+    if exposure != 0 or saturation != 0:
+        img.modulate(
+            brightness=max(0.0, 100.0 + exposure),
+            saturation=max(0.0, 100.0 + saturation),
+            hue=100.0,
+        )
+
+    contrast = float(recipe["contrast"])
+    if contrast != 0:
+        img.brightness_contrast(brightness=0.0, contrast=contrast)
+
+    quantum_range = float(img.quantum_range)
+
+    shadows = float(recipe["shadows"])
+    if shadows != 0:
+        img.sigmoidal_contrast(
+            sharpen=shadows < 0,
+            strength=max(0.1, abs(shadows) / 20.0),
+            midpoint=0.25 * quantum_range,
+        )
+
+    highlights = float(recipe["highlights"])
+    if highlights != 0:
+        img.sigmoidal_contrast(
+            sharpen=highlights < 0,
+            strength=max(0.1, abs(highlights) / 20.0),
+            midpoint=0.75 * quantum_range,
+        )
+
+    temperature = float(recipe["temperature"])
+    if temperature != 0:
+        delta = quantum_range * (abs(temperature) / 100.0) * 0.06
+        if temperature > 0:
+            _apply_channel_shift(img, "red", delta)
+            _apply_channel_shift(img, "blue", -delta)
+        else:
+            _apply_channel_shift(img, "red", -delta)
+            _apply_channel_shift(img, "blue", delta)
+
+    tint = float(recipe["tint"])
+    if tint != 0:
+        delta = quantum_range * (abs(tint) / 100.0) * 0.05
+        # Positive values push towards magenta, negative values towards green.
+        _apply_channel_shift(img, "green", -delta if tint > 0 else delta)
+
+    sharpness = float(recipe["sharpness"])
+    if sharpness > 0:
+        img.sharpen(radius=0.0, sigma=max(0.1, 0.5 + sharpness / 40.0))
+
+    vignette = float(recipe["vignette"])
+    if vignette > 0:
+        sigma = max(img.width, img.height) * (vignette / 100.0) * 0.12
+        img.vignette(
+            radius=0.0,
+            sigma=max(1.0, sigma),
+            x=int(img.width * 0.08),
+            y=int(img.height * 0.08),
+        )
+
+    img.clamp()
+
+
 def _generate_preview(img: Image, *, long_side: int, quality: int, dest: Path):
     with img.clone() as copy:
         w, h = copy.width, copy.height
@@ -102,14 +201,63 @@ def _generate_preview(img: Image, *, long_side: int, quality: int, dest: Path):
         copy.save(filename=str(dest))
 
 
-def _generate_face_crops(db, asset_id: str, preview_path: Path):
-    """Crop each detected face from the preview and save as a 256x256 JPEG."""
+def _upsert_version_file(
+    db,
+    *,
+    version: AssetVersion,
+    purpose: str,
+    filename: str,
+    path: str,
+    width: int,
+    height: int,
+    size_bytes: int,
+    mime_type: str = "image/jpeg",
+) -> None:
+    file_record = (
+        db.query(File)
+        .filter_by(asset_version_id=version.id, purpose=purpose)
+        .first()
+    )
+    if not file_record:
+        file_record = File(
+            id=uuid.uuid4(),
+            asset_id=version.asset_id,
+            asset_version_id=version.id,
+            purpose=purpose,
+            filename=filename,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            path=path,
+            width=width,
+            height=height,
+        )
+        db.add(file_record)
+        return
+
+    file_record.filename = filename
+    file_record.mime_type = mime_type
+    file_record.path = path
+    file_record.size_bytes = size_bytes
+    file_record.width = width
+    file_record.height = height
+
+
+def _get_original_file(db, asset_id: uuid.UUID) -> File | None:
+    return (
+        db.query(File)
+        .filter_by(asset_id=asset_id, purpose="original")
+        .order_by(File.created_at.desc())
+        .first()
+    )
+
+
+def _generate_face_crops(db, version: AssetVersion, preview_path: Path):
     with Image(filename=str(preview_path)) as img:
         w_img, h_img = img.width, img.height
 
         detections = (
             db.query(FaceDetection)
-            .filter_by(asset_id=asset_id)
+            .filter_by(asset_version_id=version.id)
             .filter(FaceDetection.crop_path.is_(None))
             .all()
         )
@@ -129,8 +277,6 @@ def _generate_face_crops(db, asset_id: str, preview_path: Path):
             crop_w = max(face_right - face_left, 1)
             crop_h = max(face_bottom - face_top, 1)
 
-            # Build a square crop directly within original image bounds.
-            # This avoids using extent() padding that can introduce white bars.
             side = min(max(crop_w, crop_h), w_img, h_img)
             center_x = face_left + crop_w / 2
             center_y = face_top + crop_h / 2
@@ -141,12 +287,13 @@ def _generate_face_crops(db, asset_id: str, preview_path: Path):
 
             with img.clone() as crop:
                 crop.crop(left, top, width=side, height=side)
-
                 crop.resize(256, 256)
                 crop.format = "jpeg"
                 crop.compression_quality = 90
 
-                rel_path = f"crops/{asset_id}/{det.id}.jpg"
+                rel_path = (
+                    f"crops/{version.asset_id}/v{version.version_number}/{det.id}.jpg"
+                )
                 dest = Path(settings.storage_root) / rel_path
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 crop.save(filename=str(dest))
@@ -154,8 +301,7 @@ def _generate_face_crops(db, asset_id: str, preview_path: Path):
                 det.crop_path = rel_path
 
 
-def _save_face_detections(db, asset_id: str, preview_path: Path):
-    """Отправляет превью в ml сервис и сохраняет найденные лица."""
+def _save_face_detections(db, version: AssetVersion, preview_path: Path):
     try:
         faces = detect_faces(str(preview_path))
     except Exception as e:
@@ -171,32 +317,50 @@ def _save_face_detections(db, asset_id: str, preview_path: Path):
         y = float(bbox.get("y", 0.0))
         w = float(bbox.get("w", 0.0))
         h = float(bbox.get("h", 0.0))
-        # Backend safety net against ML full-frame fallback bbox.
         if x <= 0.001 and y <= 0.001 and w >= 0.998 and h >= 0.998:
             continue
-
         if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 0.0 < w <= 1.0 and 0.0 < h <= 1.0):
             continue
 
-        db.add(FaceDetection(
-            asset_id=asset_id,
-            face_index=face["face_index"],
-            bbox=bbox,
-            embedding=face["embedding"],
-            confidence=face["confidence"],
-            quality_score=face.get("quality_score"),
-            is_reference=False,
-            created_at=datetime.datetime.now(),
-        ))
+        db.add(
+            FaceDetection(
+                asset_id=version.asset_id,
+                asset_version_id=version.id,
+                face_index=face["face_index"],
+                bbox=bbox,
+                embedding=face["embedding"],
+                confidence=face["confidence"],
+                quality_score=face.get("quality_score"),
+                is_reference=False,
+                created_at=datetime.datetime.now(),
+            )
+        )
+
+
+def _latest_versions_query(db, batch_id):
+    latest_sq = (
+        db.query(
+            AssetVersion.asset_id.label("asset_id"),
+            func.max(AssetVersion.version_number).label("max_version_number"),
+        )
+        .join(Asset, AssetVersion.asset_id == Asset.id)
+        .filter(Asset.import_batch_id == batch_id)
+        .group_by(AssetVersion.asset_id)
+        .subquery()
+    )
+    return (
+        db.query(AssetVersion)
+        .join(
+            latest_sq,
+            and_(
+                AssetVersion.asset_id == latest_sq.c.asset_id,
+                AssetVersion.version_number == latest_sq.c.max_version_number,
+            ),
+        )
+    )
 
 
 def _finalize_batch_if_done(db, batch_id) -> None:
-    """Переводит партию в pending_review, когда все её ассеты финализированы.
-
-    Финальные статусы ассета: ready / partial_error / error. Вызывается в
-    finally у process_asset_ml. Операция идемпотентна: если партия уже не в
-    статусе `processing`, ничего не делает.
-    """
     if batch_id is None:
         return
 
@@ -204,16 +368,15 @@ def _finalize_batch_if_done(db, batch_id) -> None:
     if not batch or batch.status != IMPORT_BATCH_STATUS_PROCESSING:
         return
 
-    remaining = (
-        db.query(func.count(Asset.id))
-        .filter(Asset.import_batch_id == batch_id)
-        .filter(
-            Asset.status.notin_(
-                [ASSET_STATUS_READY, ASSET_STATUS_PARTIAL_ERROR, ASSET_STATUS_ERROR]
-            )
-        )
-        .scalar()
-        or 0
+    terminal_statuses = {
+        VERSION_STATUS_READY,
+        VERSION_STATUS_PARTIAL_ERROR,
+        VERSION_STATUS_ERROR,
+    }
+    remaining = sum(
+        1
+        for version in _latest_versions_query(db, batch_id).all()
+        if version.status not in terminal_statuses
     )
     if remaining == 0:
         batch.status = IMPORT_BATCH_STATUS_PENDING_REVIEW
@@ -222,90 +385,110 @@ def _finalize_batch_if_done(db, batch_id) -> None:
 
 
 @celery.task(name="app.assets.tasks.process_asset_preview")
-def process_asset_preview(asset_id: str, file_id: str):
-    """Фаза 1 — дешёвая: метаданные, thumbnail, preview.
-
-    Управляет только preview_status / preview_error, общий asset.status
-    пересчитывается из derive_asset_status.
-    """
+def process_asset_preview(version_id: str):
     db = SessionLocal()
     try:
-        asset = db.query(Asset).filter_by(id=asset_id).first()
-        file_record = db.query(File).filter_by(id=file_id).first()
-
-        if not asset or not file_record:
+        try:
+            version_uuid = uuid.UUID(version_id)
+        except ValueError:
             return
 
-        # Отмечаем, что фаза пошла в работу. Коммитим сразу, чтобы клиент
-        # видел processing в API до окончания тяжёлой работы.
-        asset.preview_status = TASK_STATUS_PROCESSING
-        asset.preview_error = None
-        apply_asset_status(asset)
+        version = db.query(AssetVersion).filter_by(id=version_uuid).first()
+        if not version:
+            return
+
+        asset = db.query(Asset).filter_by(id=version.asset_id).first()
+        if not asset:
+            return
+
+        original_file = _get_original_file(db, asset.id)
+        if not original_file:
+            version.preview_status = TASK_STATUS_FAILED
+            version.preview_error = "Оригинальный файл не найден"
+            apply_version_status(version)
+            db.commit()
+            return
+
+        version.preview_status = TASK_STATUS_PROCESSING
+        version.preview_error = None
+        apply_version_status(version)
         db.commit()
 
-        file_path = Path(settings.storage_root) / file_record.path
+        file_path = Path(settings.storage_root) / original_file.path
         storage = Path(settings.storage_root)
 
         try:
             with Image(filename=str(file_path)) as img:
-                file_record.width = img.width
-                file_record.height = img.height
+                img.auto_orient()
+                original_file.width = img.width
+                original_file.height = img.height
+
                 meta = _extract_metadata(img) or {}
-                exif = meta.get("exif") if isinstance(meta.get("exif"), dict) else None
-                iptc = meta.get("iptc") if isinstance(meta.get("iptc"), dict) else None
-                xmp = meta.get("xmp") if isinstance(meta.get("xmp"), dict) else None
-                other = meta.get("other") if isinstance(meta.get("other"), dict) else None
+                if version.exif is None and isinstance(meta.get("exif"), dict):
+                    version.exif = meta.get("exif")
+                if version.iptc is None and isinstance(meta.get("iptc"), dict):
+                    version.iptc = meta.get("iptc")
+                if version.xmp is None and isinstance(meta.get("xmp"), dict):
+                    version.xmp = meta.get("xmp")
+                if version.other is None and isinstance(meta.get("other"), dict):
+                    version.other = meta.get("other")
 
-                for spec in PREVIEW_SPECS:
-                    preview_filename = f"{spec['purpose']}.jpg"
-                    preview_dir = storage / spec["subdir"] / asset_id
-                    dest = preview_dir / preview_filename
-                    _generate_preview(
-                        img,
-                        long_side=spec["long_side"],
-                        quality=spec["quality"],
-                        dest=dest,
-                    )
+                recipe = normalize_recipe(version.recipe)
+                version.recipe = recipe
 
-                    preview_stat = dest.stat()
-                    with Image(filename=str(dest)) as preview_img:
-                        pw, ph = preview_img.width, preview_img.height
+                with img.clone() as processed:
+                    _apply_recipe(processed, recipe)
+                    version.rendered_width = processed.width
+                    version.rendered_height = processed.height
 
-                    db.add(File(
-                        id=uuid.uuid4(),
-                        asset_id=asset_id,
-                        filename=preview_filename,
-                        mime_type="image/jpeg",
-                        width=pw,
-                        height=ph,
-                        size_bytes=preview_stat.st_size,
-                        path=f"{spec['subdir']}/{asset_id}/{preview_filename}",
-                        purpose=spec["purpose"],
-                    ))
+                    for spec in PREVIEW_SPECS:
+                        preview_filename = f"{spec['purpose']}.jpg"
+                        rel_path = (
+                            f"{spec['subdir']}/{asset.id}/v{version.version_number}/"
+                            f"{preview_filename}"
+                        )
+                        dest = storage / rel_path
+                        _generate_preview(
+                            processed,
+                            long_side=spec["long_side"],
+                            quality=spec["quality"],
+                            dest=dest,
+                        )
 
-            version = AssetVersion(
-                asset_id=asset_id,
-                version_number=1,
-                recipe={},
-                exif=exif,
-                iptc=iptc,
-                xmp=xmp,
-                other=other,
-                keywords=[],
-            )
-            db.add(version)
+                        preview_stat = dest.stat()
+                        with Image(filename=str(dest)) as preview_img:
+                            pw, ph = preview_img.width, preview_img.height
 
-            asset.preview_status = TASK_STATUS_COMPLETED
-            asset.preview_error = None
-            apply_asset_status(asset)
+                        _upsert_version_file(
+                            db,
+                            version=version,
+                            purpose=spec["purpose"],
+                            filename=preview_filename,
+                            path=rel_path,
+                            width=pw,
+                            height=ph,
+                            size_bytes=preview_stat.st_size,
+                        )
+
+            version.preview_status = TASK_STATUS_COMPLETED
+            version.preview_error = None
+            apply_version_status(version)
             db.commit()
+
+            batch = (
+                db.query(ImportBatch).filter_by(id=asset.import_batch_id).first()
+                if asset.import_batch_id is not None
+                else None
+            )
+            if batch is None or batch.status != IMPORT_BATCH_STATUS_UPLOADING:
+                process_asset_ml.delay(str(version.id))
         except Exception as exc:
             db.rollback()
-            asset = db.query(Asset).filter_by(id=asset_id).first()
-            if asset:
-                asset.preview_status = TASK_STATUS_FAILED
-                asset.preview_error = _truncate_error(exc)
-                apply_asset_status(asset)
+            version = db.query(AssetVersion).filter_by(id=version_uuid).first()
+            if version:
+                version.preview_status = TASK_STATUS_FAILED
+                version.preview_error = _truncate_error(exc)
+                apply_version_status(version)
                 db.commit()
             raise
     finally:
@@ -313,23 +496,20 @@ def process_asset_preview(asset_id: str, file_id: str):
 
 
 @celery.task(name="app.assets.tasks.process_asset_ml")
-def process_asset_ml(asset_id: str):
-    """Фаза 2 — дорогая: детекция лиц, кропы, матчинг identity.
-
-    Управляет только faces_status / faces_error. Исключения внутри фазы
-    ловим и не пробрасываем наружу: faces — необязательная фаза, общий
-    статус ассета станет partial_error, а финализация партии обязательно
-    сработает в finally.
-    """
+def process_asset_ml(version_id: str):
     db = SessionLocal()
     batch_id = None
     try:
         try:
-            asset_uuid = uuid.UUID(asset_id)
+            version_uuid = uuid.UUID(version_id)
         except ValueError:
             return
 
-        asset = db.query(Asset).filter_by(id=asset_uuid).first()
+        version = db.query(AssetVersion).filter_by(id=version_uuid).first()
+        if not version:
+            return
+
+        asset = db.query(Asset).filter_by(id=version.asset_id).first()
         if not asset:
             return
 
@@ -337,15 +517,14 @@ def process_asset_ml(asset_id: str):
 
         preview_file = (
             db.query(File)
-            .filter_by(asset_id=asset.id, purpose="preview")
-            .order_by(File.created_at.desc())
+            .filter_by(asset_version_id=version.id, purpose="preview")
             .first()
         )
 
         def _fail(reason: str) -> None:
-            asset.faces_status = TASK_STATUS_FAILED
-            asset.faces_error = reason[:ERROR_TEXT_LIMIT]
-            apply_asset_status(asset)
+            version.faces_status = TASK_STATUS_FAILED
+            version.faces_error = reason[:ERROR_TEXT_LIMIT]
+            apply_version_status(version)
             db.commit()
 
         if not preview_file:
@@ -357,37 +536,43 @@ def process_asset_ml(asset_id: str):
             _fail(f"Файл превью отсутствует на диске: {preview_file.path}")
             return
 
-        asset.faces_status = TASK_STATUS_PROCESSING
-        asset.faces_error = None
-        apply_asset_status(asset)
+        version.faces_status = TASK_STATUS_PROCESSING
+        version.faces_error = None
+        apply_version_status(version)
         db.commit()
 
         try:
-            # Make ML reruns idempotent: keep only fresh detections for this asset.
-            db.query(FaceDetection).filter_by(asset_id=asset.id).delete()
+            db.query(FaceDetection).filter_by(asset_version_id=version.id).delete()
             db.flush()
 
-            _save_face_detections(db, str(asset.id), preview_path)
+            _save_face_detections(db, version, preview_path)
             db.flush()
-            _generate_face_crops(db, str(asset.id), preview_path)
-            match_detections_for_asset(db, asset.id)
 
-            asset.faces_status = TASK_STATUS_COMPLETED
-            asset.faces_error = None
-            apply_asset_status(asset)
+            transfer_user_assignments_from_base_version(
+                db,
+                target_version_id=version.id,
+                base_version_id=version.base_version_id,
+            )
+            db.flush()
+
+            match_detections_for_version(db, version.id)
+            db.flush()
+
+            _generate_face_crops(db, version, preview_path)
+            promote_identity_source_version(db, version.id)
+
+            version.faces_status = TASK_STATUS_COMPLETED
+            version.faces_error = None
+            apply_version_status(version)
             db.commit()
         except Exception as exc:
             db.rollback()
-            asset = db.query(Asset).filter_by(id=asset_uuid).first()
-            if asset:
-                asset.faces_status = TASK_STATUS_FAILED
-                asset.faces_error = _truncate_error(exc)
-                apply_asset_status(asset)
+            version = db.query(AssetVersion).filter_by(id=version_uuid).first()
+            if version:
+                version.faces_status = TASK_STATUS_FAILED
+                version.faces_error = _truncate_error(exc)
+                apply_version_status(version)
                 db.commit()
-            # Сознательно глотаем исключение: faces — опциональная фаза,
-            # общий статус ассета теперь partial_error. Пробрасывать наверх
-            # не надо, иначе celery пометит задачу как failed и финализация
-            # батча может не дождаться своих "ответов".
     finally:
         try:
             _finalize_batch_if_done(db, batch_id)

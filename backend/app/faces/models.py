@@ -90,6 +90,11 @@ class FaceDetection(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     asset_id     = Column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    asset_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("asset_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
 
     identity_id = Column(
         UUID(as_uuid=True),
@@ -135,6 +140,11 @@ class FaceDetection(Base):
         "FaceIdentity",
         back_populates="detections",
         foreign_keys=[identity_id],
+    )
+    asset_version = relationship(
+        "AssetVersion",
+        back_populates="face_detections",
+        foreign_keys=[asset_version_id],
     )
 
     model_identity = relationship(

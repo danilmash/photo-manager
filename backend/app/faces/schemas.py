@@ -62,6 +62,7 @@ class FaceAssignmentResponse(BaseModel):
 class FaceDetectionSchema(BaseModel):
     id: UUID
     asset_id: UUID
+    asset_version_id: UUID
     identity_id: UUID | None
     face_index: int
     bbox: dict

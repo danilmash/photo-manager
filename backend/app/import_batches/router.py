@@ -1,7 +1,7 @@
 import uuid as uuid_mod
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.assets.models import (
@@ -9,9 +9,10 @@ from app.assets.models import (
     TASK_STATUS_FAILED,
     TASK_STATUS_PENDING,
     TASK_STATUS_PROCESSING,
-    apply_asset_status,
     Asset,
+    AssetVersion,
     File as AssetFileModel,
+    apply_version_status,
 )
 from app.faces.models import FaceDetection
 from app.assets.tasks import process_asset_ml, process_asset_preview
@@ -35,6 +36,20 @@ from app.users.dependencies import get_current_user
 from app.users.models import User
 
 router = APIRouter(prefix="/api/v1/import-batches", tags=["import-batches"])
+
+
+def _latest_versions_sq(db: Session, batch_id):
+    """Одна строка на ассет: максимальный version_number среди версий партии."""
+    return (
+        db.query(
+            AssetVersion.asset_id.label("asset_id"),
+            func.max(AssetVersion.version_number).label("max_version_number"),
+        )
+        .join(Asset, AssetVersion.asset_id == Asset.id)
+        .filter(Asset.import_batch_id == batch_id)
+        .group_by(AssetVersion.asset_id)
+        .subquery()
+    )
 
 
 def _assets_count_subquery():
@@ -169,15 +184,16 @@ def list_import_batch_review_assets(
         .correlate(Asset)
         .scalar_subquery()
     )
+    latest_sq = _latest_versions_sq(db, batch.id)
     preview_file_id_sq = (
         select(AssetFileModel.id)
         .where(
-            AssetFileModel.asset_id == Asset.id,
+            AssetFileModel.asset_version_id == AssetVersion.id,
             AssetFileModel.purpose == "preview",
         )
         .order_by(AssetFileModel.created_at.desc())
         .limit(1)
-        .correlate(Asset)
+        .correlate(AssetVersion)
         .scalar_subquery()
     )
 
@@ -185,12 +201,20 @@ def list_import_batch_review_assets(
         db.query(
             Asset.id,
             Asset.title,
-            Asset.status,
-            Asset.preview_status,
-            Asset.faces_status,
+            AssetVersion.status,
+            AssetVersion.preview_status,
+            AssetVersion.faces_status,
             Asset.created_at,
             review_faces_count_sq.label("review_faces_count"),
             preview_file_id_sq.label("preview_file_id"),
+        )
+        .join(latest_sq, latest_sq.c.asset_id == Asset.id)
+        .join(
+            AssetVersion,
+            and_(
+                AssetVersion.asset_id == Asset.id,
+                AssetVersion.version_number == latest_sq.c.max_version_number,
+            ),
         )
         .filter(Asset.import_batch_id == batch.id)
         .filter(review_faces_count_sq > 0)
@@ -262,12 +286,21 @@ def close_import_batch(
             detail="Нельзя закрыть пустую партию",
         )
 
+    latest_sq = _latest_versions_sq(db, batch.id)
+    latest_versions_base = db.query(AssetVersion).join(
+        latest_sq,
+        and_(
+            AssetVersion.asset_id == latest_sq.c.asset_id,
+            AssetVersion.version_number == latest_sq.c.max_version_number,
+        ),
+    )
+
     in_flight_count = (
-        db.query(func.count(Asset.id))
-        .filter(Asset.import_batch_id == batch.id)
-        .filter(Asset.preview_status.in_([TASK_STATUS_PENDING, TASK_STATUS_PROCESSING]))
-        .scalar()
-        or 0
+        latest_versions_base.filter(
+            AssetVersion.preview_status.in_(
+                [TASK_STATUS_PENDING, TASK_STATUS_PROCESSING]
+            )
+        ).count()
     )
     if in_flight_count > 0:
         raise HTTPException(
@@ -275,23 +308,22 @@ def close_import_batch(
             detail="Есть ассеты без готовых превью, дождитесь загрузки",
         )
 
-    # На ML отправляем только те ассеты, у которых preview успешно завершён.
-    # Ассеты с preview_status=failed остаются в error-е — их можно перезапустить
-    # отдельно через retry-failed-previews уже после закрытия партии.
-    ready_asset_ids = [
-        row[0]
-        for row in db.query(Asset.id)
-        .filter(Asset.import_batch_id == batch.id)
-        .filter(Asset.preview_status == TASK_STATUS_COMPLETED)
-        .all()
+    # На ML отправляем только последние версии ассетов с успешным preview.
+    # Версии с preview_status=failed остаются в error — их можно перезапустить
+    # через retry-failed-previews уже после закрытия партии.
+    ready_version_ids = [
+        v.id
+        for v in latest_versions_base.filter(
+            AssetVersion.preview_status == TASK_STATUS_COMPLETED
+        ).all()
     ]
 
     batch.status = IMPORT_BATCH_STATUS_PROCESSING
     db.commit()
     db.refresh(batch)
 
-    for aid in ready_asset_ids:
-        process_asset_ml.delay(str(aid))
+    for vid in ready_version_ids:
+        process_asset_ml.delay(str(vid))
 
     return _to_schema(batch, assets_count)
 
@@ -352,39 +384,46 @@ def retry_failed_previews(
             detail="Партия импорта не найдена",
         )
 
-    failed_assets = (
-        db.query(Asset)
-        .filter(Asset.import_batch_id == batch.id)
-        .filter(Asset.preview_status == TASK_STATUS_FAILED)
+    latest_sq = _latest_versions_sq(db, batch.id)
+    failed_versions = (
+        db.query(AssetVersion)
+        .join(
+            latest_sq,
+            and_(
+                AssetVersion.asset_id == latest_sq.c.asset_id,
+                AssetVersion.version_number == latest_sq.c.max_version_number,
+            ),
+        )
+        .filter(AssetVersion.preview_status == TASK_STATUS_FAILED)
         .all()
     )
 
-    tasks_to_enqueue: list[tuple[str, str]] = []
-    for asset in failed_assets:
+    version_ids_to_enqueue: list[str] = []
+    for version in failed_versions:
         original_file = (
             db.query(AssetFileModel)
-            .filter_by(asset_id=asset.id, purpose="original")
+            .filter_by(asset_id=version.asset_id, purpose="original")
             .order_by(AssetFileModel.created_at.desc())
             .first()
         )
         if not original_file:
             # Без оригинала preview пересобрать невозможно — пропускаем,
-            # ассет останется в error.
+            # версия останется в error.
             continue
 
-        asset.preview_status = TASK_STATUS_PENDING
-        asset.preview_error = None
-        apply_asset_status(asset)
-        tasks_to_enqueue.append((str(asset.id), str(original_file.id)))
+        version.preview_status = TASK_STATUS_PENDING
+        version.preview_error = None
+        apply_version_status(version)
+        version_ids_to_enqueue.append(str(version.id))
 
-    if tasks_to_enqueue:
+    if version_ids_to_enqueue:
         db.commit()
-        for asset_id, file_id in tasks_to_enqueue:
-            process_asset_preview.delay(asset_id, file_id)
+        for vid in version_ids_to_enqueue:
+            process_asset_preview.delay(vid)
 
     return ImportBatchRetrySummarySchema(
         batch_id=batch.id,
-        restarted=len(tasks_to_enqueue),
+        restarted=len(version_ids_to_enqueue),
     )
 
 
@@ -423,30 +462,37 @@ def retry_failed_faces(
             ),
         )
 
-    failed_assets = (
-        db.query(Asset)
-        .filter(Asset.import_batch_id == batch.id)
-        .filter(Asset.faces_status == TASK_STATUS_FAILED)
-        .filter(Asset.preview_status == TASK_STATUS_COMPLETED)
+    latest_sq = _latest_versions_sq(db, batch.id)
+    failed_versions = (
+        db.query(AssetVersion)
+        .join(
+            latest_sq,
+            and_(
+                AssetVersion.asset_id == latest_sq.c.asset_id,
+                AssetVersion.version_number == latest_sq.c.max_version_number,
+            ),
+        )
+        .filter(AssetVersion.faces_status == TASK_STATUS_FAILED)
+        .filter(AssetVersion.preview_status == TASK_STATUS_COMPLETED)
         .all()
     )
 
-    asset_ids: list[str] = []
-    for asset in failed_assets:
-        asset.faces_status = TASK_STATUS_PENDING
-        asset.faces_error = None
-        apply_asset_status(asset)
-        asset_ids.append(str(asset.id))
+    version_ids: list[str] = []
+    for version in failed_versions:
+        version.faces_status = TASK_STATUS_PENDING
+        version.faces_error = None
+        apply_version_status(version)
+        version_ids.append(str(version.id))
 
-    if asset_ids and batch.status == IMPORT_BATCH_STATUS_PENDING_REVIEW:
+    if version_ids and batch.status == IMPORT_BATCH_STATUS_PENDING_REVIEW:
         batch.status = IMPORT_BATCH_STATUS_PROCESSING
 
-    if asset_ids:
+    if version_ids:
         db.commit()
-        for aid in asset_ids:
-            process_asset_ml.delay(aid)
+        for vid in version_ids:
+            process_asset_ml.delay(vid)
 
     return ImportBatchRetrySummarySchema(
         batch_id=batch.id,
-        restarted=len(asset_ids),
+        restarted=len(version_ids),
     )

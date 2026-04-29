@@ -17,17 +17,27 @@
     margin-bottom: -80px;
 }
 
-.image {
+/* Обёртка под Framer Motion + живое превью (filter на <img>, не на motion). */
+.image-wrap {
     position: absolute;
     inset: 0;
     margin: auto;
-
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     max-width: 100%;
     max-height: 95%;
+    will-change: transform, opacity;
+}
+
+.image-inner {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
     object-fit: contain;
     user-select: none;
-    will-change: transform, opacity;
 }
 
 .stage {
@@ -65,6 +75,22 @@
     inset: 0;
     pointer-events: none;
     z-index: 2;
+}
+
+.preview-pending {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    max-height: 95%;
+    font-size: var(--font-size-md);
+    color: var(--color-text-secondary);
+    text-align: center;
+    padding: 24px;
+    user-select: none;
 }
 
 .face-box {

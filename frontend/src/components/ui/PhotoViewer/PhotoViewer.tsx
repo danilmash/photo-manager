@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ChevronLeft, ChevronRight, Ellipsis, Info } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Info, SlidersHorizontal } from 'lucide-react';
 
 import styles from './PhotoViewer.module.css';
-import { getAssetViewer, type AssetListItem, type AssetViewer } from '../../../api/assets';
+import {
+  createAssetVersion,
+  getAssetViewer,
+  type AssetListItem,
+  type AssetViewer,
+} from '../../../api/assets';
+import { DEFAULT_PHOTO_RECIPE, normalizeRecipe, type PhotoRecipe } from '../../../api/recipe';
 import Button from '../Button';
 import Drawer from '../Drawer';
 import PhotoCarousel from '../PhotoCarousel';
 import PhotoFacesPanel from '../PhotoFacesPanel';
+import PhotoEditDrawer from './PhotoEditDrawer';
+import {
+  recipeLivePreviewDeltaStyle,
+  recipeVignetteDeltaOverlayStyle,
+} from './recipeLivePreview';
 
 interface PhotoViewerProps {
   photos: AssetListItem[];
@@ -83,6 +94,10 @@ export default function PhotoViewer({
 }: PhotoViewerProps) {
   const [direction, setDirection] = useState<Direction>(1);
   const [infoDrawerOpen, setInfoDrawerOpen] = useState(false);
+  const [editDrawerOpen, setEditDrawerOpen] = useState(false);
+  const [applyingVersion, setApplyingVersion] = useState(false);
+  const [draftRecipe, setDraftRecipe] = useState<PhotoRecipe>(DEFAULT_PHOTO_RECIPE);
+  const [editBaselineRecipe, setEditBaselineRecipe] = useState<PhotoRecipe | null>(null);
   const [viewerById, setViewerById] = useState<Record<string, AssetViewer>>({});
   const [viewerLoadingById, setViewerLoadingById] = useState<Record<string, boolean>>(
     {},
@@ -130,11 +145,6 @@ export default function PhotoViewer({
 
   const currentPhoto = photos[currentIndex];
 
-  const photoSrc = useMemo(() => {
-    const v = currentPhoto?.version;
-    return v?.preview_url || v?.thumbnail_url || '';
-  }, [currentPhoto]);
-
   const currentViewer = currentPhoto ? viewerById[currentPhoto.asset_id] ?? null : null;
   const viewerLoading = currentPhoto
     ? viewerLoadingById[currentPhoto.asset_id] ?? false
@@ -142,6 +152,33 @@ export default function PhotoViewer({
   const viewerError = currentPhoto
     ? viewerErrorById[currentPhoto.asset_id] ?? null
     : null;
+
+  const photoSrc = useMemo(() => {
+    const vv = currentViewer?.version;
+    const vl = currentPhoto?.version;
+    return (
+      vv?.preview_url ||
+      vv?.thumbnail_url ||
+      vl?.preview_url ||
+      vl?.thumbnail_url ||
+      ''
+    );
+  }, [
+    currentViewer?.version?.preview_url,
+    currentViewer?.version?.thumbnail_url,
+    currentPhoto?.version?.preview_url,
+    currentPhoto?.version?.thumbnail_url,
+  ]);
+
+  const livePreviewImgStyle = useMemo(() => {
+    if (!editDrawerOpen || !editBaselineRecipe) return undefined;
+    return recipeLivePreviewDeltaStyle(draftRecipe, editBaselineRecipe);
+  }, [editDrawerOpen, draftRecipe, editBaselineRecipe]);
+
+  const liveVignetteStyle = useMemo(() => {
+    if (!editDrawerOpen || !editBaselineRecipe) return null;
+    return recipeVignetteDeltaOverlayStyle(draftRecipe, editBaselineRecipe);
+  }, [editDrawerOpen, draftRecipe, editBaselineRecipe]);
 
   useEffect(() => {
     viewerByIdRef.current = viewerById;
@@ -200,6 +237,40 @@ export default function PhotoViewer({
       }
     }
   }, []);
+
+  useEffect(() => {
+    setEditDrawerOpen(false);
+  }, [currentPhoto?.asset_id]);
+
+  useEffect(() => {
+    if (!editDrawerOpen) {
+      setEditBaselineRecipe(null);
+      return;
+    }
+    if (!currentViewer?.version) return;
+    const normalized = normalizeRecipe(currentViewer.version.recipe);
+    setEditBaselineRecipe(normalized);
+    setDraftRecipe(normalized);
+  }, [editDrawerOpen, currentViewer?.version?.id]);
+
+  const handleApplyEdit = useCallback(async () => {
+    const aid = currentPhoto?.asset_id;
+    const vid = currentViewer?.version?.id;
+    if (!aid || !vid) return;
+    setApplyingVersion(true);
+    try {
+      await createAssetVersion(aid, {
+        recipe: draftRecipe,
+        base_version_id: vid,
+      });
+      setEditDrawerOpen(false);
+      await loadAssetViewer(aid, true);
+    } catch {
+      // ошибку можно показать тостом позже
+    } finally {
+      setApplyingVersion(false);
+    }
+  }, [currentPhoto?.asset_id, currentViewer?.version?.id, draftRecipe, loadAssetViewer]);
 
   useEffect(() => {
     setImageSettled(false);
@@ -317,7 +388,7 @@ export default function PhotoViewer({
     return String(value);
   };
 
-  if (!currentPhoto || !photoSrc) return null;
+  if (!currentPhoto) return null;
 
   return (
     <div ref={viewerRef} className={styles.viewer}>
@@ -336,16 +407,24 @@ export default function PhotoViewer({
           <Button
             color="muted"
             variant="ghost"
-            onClick={() => setInfoDrawerOpen(true)}
+            onClick={() => {
+              setEditDrawerOpen(false);
+              setInfoDrawerOpen(true);
+            }}
             icon={<Info />}
             size="xl"
+            aria-label="Информация"
           />
           <Button
             color="muted"
             variant="ghost"
-            onClick={() => {}}
-            icon={<Ellipsis />}
+            onClick={() => {
+              setInfoDrawerOpen(false);
+              setEditDrawerOpen(true);
+            }}
+            icon={<SlidersHorizontal />}
             size="xl"
+            aria-label="Редактирование"
           />
         </div>
 
@@ -450,38 +529,81 @@ export default function PhotoViewer({
             )}
           </div>
         </Drawer>
+
+        <Drawer
+          behavior="move"
+          title="Редактирование"
+          open={editDrawerOpen}
+          onClose={() => setEditDrawerOpen(false)}
+          side="right"
+          portalTarget={viewerRef.current}
+        >
+          <PhotoEditDrawer
+            recipe={draftRecipe}
+            onRecipeChange={setDraftRecipe}
+            onApply={handleApplyEdit}
+            applying={applyingVersion}
+            disabled={!currentViewer?.version}
+          />
+        </Drawer>
       </div>
 
       <div ref={stageRef} className={styles.stage}>
         <AnimatePresence initial={false} custom={direction} mode="wait">
-          <motion.img
-            ref={imgRef}
-            key={currentPhoto.asset_id ?? `${currentIndex}-${photoSrc}`}
-            src={photoSrc}
-            alt="Фотография"
-            className={styles.image}
-            custom={direction}
-            variants={variants}
-            initial="enter"
-            animate="center"
-            exit="exit"
-            transition={{
-              duration: 0.22,
-              ease: [0.22, 1, 0.36, 1],
-            }}
-            onLoad={() => {
-              requestAnimationFrame(() => {
-                updateImageMetrics();
-              });
-            }}
-            onAnimationComplete={() => {
-              requestAnimationFrame(() => {
-                updateImageMetrics();
-                setImageSettled(true);
-              });
-            }}
-            draggable={false}
-          />
+          {photoSrc ? (
+            <motion.div
+              key={currentPhoto.asset_id ?? `${currentIndex}-${photoSrc}`}
+              className={styles['image-wrap']}
+              custom={direction}
+              variants={variants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{
+                duration: 0.22,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+              onAnimationComplete={() => {
+                requestAnimationFrame(() => {
+                  updateImageMetrics();
+                  setImageSettled(true);
+                });
+              }}
+            >
+              <img
+                ref={imgRef}
+                src={photoSrc}
+                alt="Фотография"
+                className={styles['image-inner']}
+                style={livePreviewImgStyle}
+                draggable={false}
+                onLoad={() => {
+                  requestAnimationFrame(() => {
+                    updateImageMetrics();
+                  });
+                }}
+              />
+              {liveVignetteStyle ? (
+                <div style={liveVignetteStyle} aria-hidden />
+              ) : null}
+            </motion.div>
+          ) : (
+            <motion.div
+              key={`${currentPhoto.asset_id}-pending`}
+              className={styles['preview-pending']}
+              custom={direction}
+              variants={variants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{
+                duration: 0.22,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+            >
+              Превью обновляется…
+            </motion.div>
+          )}
         </AnimatePresence>
 
         {faceBoxes.length > 0 && (
@@ -500,6 +622,7 @@ export default function PhotoViewer({
                 }}
                 onClick={() => {
                   setActiveFaceId(box.id);
+                  setEditDrawerOpen(false);
                   setInfoDrawerOpen(true);
                 }}
               >

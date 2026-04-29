@@ -1,4 +1,5 @@
 import type { AxiosProgressEvent } from 'axios';
+import type { PhotoRecipe } from './recipe';
 import { api } from './client';
 
 export type AssetStatus =
@@ -173,6 +174,30 @@ export interface AssetViewer {
 
 export async function getAssetViewer(assetId: string): Promise<AssetViewer> {
   const { data } = await api.get<AssetViewer>(`/assets/${assetId}`);
+  return data;
+}
+
+export interface AssetVersionJobResponse {
+  asset_id: string;
+  version_id: string;
+  version_number: number;
+  status: AssetStatus;
+  preview_status: TaskStatus;
+  faces_status: TaskStatus;
+  preview_error: string | null;
+  faces_error: string | null;
+  job_id: string;
+}
+
+/** Новая версия с заданным рецептом; бэкенд ставит превью/лица в очередь. */
+export async function createAssetVersion(
+  assetId: string,
+  body: { recipe: PhotoRecipe; base_version_id?: string | null },
+): Promise<AssetVersionJobResponse> {
+  const { data } = await api.post<AssetVersionJobResponse>(`/assets/${assetId}/versions`, {
+    recipe: body.recipe,
+    base_version_id: body.base_version_id ?? undefined,
+  });
   return data;
 }
 

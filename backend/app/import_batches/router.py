@@ -5,6 +5,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.assets.models import (
+    ASSET_LIFECYCLE_ACTIVE,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     TASK_STATUS_PENDING,
@@ -47,6 +48,7 @@ def _latest_versions_sq(db: Session, batch_id):
         )
         .join(Asset, AssetVersion.asset_id == Asset.id)
         .filter(Asset.import_batch_id == batch_id)
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
         .group_by(AssetVersion.asset_id)
         .subquery()
     )
@@ -55,7 +57,10 @@ def _latest_versions_sq(db: Session, batch_id):
 def _assets_count_subquery():
     return (
         select(func.count(Asset.id))
-        .where(Asset.import_batch_id == ImportBatch.id)
+        .where(
+            Asset.import_batch_id == ImportBatch.id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+        )
         .correlate(ImportBatch)
         .scalar_subquery()
     )
@@ -217,6 +222,7 @@ def list_import_batch_review_assets(
             ),
         )
         .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
         .filter(review_faces_count_sq > 0)
     )
 
@@ -277,6 +283,7 @@ def close_import_batch(
     assets_count = (
         db.query(func.count(Asset.id))
         .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
         .scalar()
         or 0
     )
@@ -357,6 +364,7 @@ def set_import_batch_project(
     assets_count = (
         db.query(func.count(Asset.id))
         .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
         .scalar()
         or 0
     )

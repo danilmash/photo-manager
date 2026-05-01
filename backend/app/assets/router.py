@@ -3,14 +3,16 @@ import shutil
 import uuid as uuid_mod
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import and_
 from sqlalchemy.orm import Session, joinedload
 
 from app.assets.models import (
+    ASSET_LIFECYCLE_ACTIVE,
+    ASSET_LIFECYCLE_TRASHED,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     TASK_STATUS_PENDING,
@@ -22,6 +24,7 @@ from app.assets.models import (
 )
 from app.assets.recipes import normalize_recipe
 from app.assets.schemas import (
+    AssetLifecycleResponseSchema,
     AssetListItemSchema,
     AssetListResponseSchema,
     AssetMetadataResponseSchema,
@@ -79,14 +82,68 @@ def _build_file_url(file_id: uuid_mod.UUID | None) -> str | None:
     return f"/api/v1/assets/files/{file_id}"
 
 
-def _get_asset_or_404(db: Session, asset_id: uuid_mod.UUID) -> Asset:
-    asset = db.query(Asset).filter_by(id=asset_id).first()
+def _require_user_asset(db: Session, asset_id: uuid_mod.UUID, user: User) -> Asset:
+    asset = (
+        db.query(Asset)
+        .filter(Asset.id == asset_id, Asset.owner_id == user.id)
+        .first()
+    )
     if not asset:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Ассет не найден",
         )
     return asset
+
+
+def _require_active_lifecycle(asset: Asset) -> None:
+    if asset.lifecycle_status != ASSET_LIFECYCLE_ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Операция недоступна: ассет в корзине",
+        )
+
+
+def _require_trashed_lifecycle(asset: Asset) -> None:
+    if asset.lifecycle_status != ASSET_LIFECYCLE_TRASHED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Полное удаление доступно только для ассетов в корзине",
+        )
+
+
+def _collect_asset_relative_paths(db: Session, asset_id: uuid_mod.UUID) -> list[str]:
+    paths: list[str] = []
+    for (p,) in db.query(AssetFileModel.path).filter_by(asset_id=asset_id).all():
+        if p:
+            paths.append(p)
+    for (cp,) in (
+        db.query(FaceDetection.crop_path).filter(FaceDetection.asset_id == asset_id).all()
+    ):
+        if cp:
+            paths.append(cp)
+    return paths
+
+
+def _unlink_asset_rel_paths(rel_paths: list[str]) -> None:
+    root = Path(settings.storage_root).resolve()
+    seen: set[Path] = set()
+    for rel in rel_paths:
+        if not rel or Path(rel).is_absolute():
+            continue
+        try:
+            full = (root / rel).resolve()
+            full.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if full in seen:
+            continue
+        seen.add(full)
+        try:
+            if full.is_file():
+                full.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _get_original_file(db: Session, asset_id: uuid_mod.UUID) -> AssetFileModel | None:
@@ -410,12 +467,18 @@ def list_assets(
     limit: int = 50,
     cursor: str | None = None,
     batch_id: uuid_mod.UUID | None = None,
+    lifecycle: Literal["active", "trashed", "all"] = Query(default="active"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     limit = max(1, min(limit, 200))
 
-    q = db.query(Asset).order_by(Asset.created_at.desc(), Asset.id.desc())
+    q = db.query(Asset).filter(Asset.owner_id == current_user.id)
+    if lifecycle == "active":
+        q = q.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
+    elif lifecycle == "trashed":
+        q = q.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_TRASHED)
+    q = q.order_by(Asset.created_at.desc(), Asset.id.desc())
     if batch_id is not None:
         q = q.filter(Asset.import_batch_id == batch_id)
 
@@ -453,6 +516,8 @@ def list_assets(
                 title=asset.title,
                 created_at=asset.created_at,
                 updated_at=asset.updated_at,
+                lifecycle_status=asset.lifecycle_status,
+                trashed_at=asset.trashed_at,
                 version=(
                     _build_version_summary(
                         version,
@@ -478,12 +543,24 @@ def get_asset_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    f = db.query(AssetFileModel).filter_by(id=file_id).first()
-    if not f:
+    row = (
+        db.query(AssetFileModel, Asset)
+        .join(Asset, Asset.id == AssetFileModel.asset_id)
+        .filter(AssetFileModel.id == file_id)
+        .first()
+    )
+    if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Файл не найден",
         )
+    f, asset = row
+    if asset.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Файл не найден",
+        )
+    _require_active_lifecycle(asset)
 
     path = Path(settings.storage_root) / f.path
     if not path.exists():
@@ -502,7 +579,8 @@ def create_asset_version(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _get_asset_or_404(db, asset_id)
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
     latest_version = _get_latest_version(db, asset_id)
 
     base_version = None
@@ -561,7 +639,8 @@ def list_asset_versions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _get_asset_or_404(db, asset_id)
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
     versions = (
         db.query(AssetVersion)
         .filter_by(asset_id=asset_id)
@@ -585,7 +664,8 @@ def get_asset_viewer(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _get_asset_or_404(db, asset_id)
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
     version = _get_version_or_404(
         db,
         asset_id,
@@ -678,7 +758,8 @@ def get_asset_metadata(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _get_asset_or_404(db, asset_id)
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
     version = _get_version_or_404(
         db,
         asset_id,
@@ -723,7 +804,8 @@ def get_asset_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _get_asset_or_404(db, asset_id)
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
     version = _get_version_or_404(db, asset_id)
     return _build_version_status_schema(version)
 
@@ -738,7 +820,8 @@ def retry_asset_preview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _get_asset_or_404(db, asset_id)
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
     version = _get_version_or_404(db, asset_id, version_id=version_id)
 
     if version.preview_status != TASK_STATUS_FAILED:
@@ -778,7 +861,8 @@ def retry_asset_faces(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _get_asset_or_404(db, asset_id)
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
     version = _get_version_or_404(db, asset_id, version_id=version_id)
 
     if version.faces_status != TASK_STATUS_FAILED:
@@ -808,3 +892,38 @@ def retry_asset_faces(
 
     process_asset_ml.delay(str(version.id))
     return _build_version_status_schema(version)
+
+
+@router.post("/{asset_id}/trash", response_model=AssetLifecycleResponseSchema)
+def trash_asset(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
+    asset.lifecycle_status = ASSET_LIFECYCLE_TRASHED
+    asset.trashed_at = datetime.utcnow()
+    asset.trashed_by_user_id = current_user.id
+    db.commit()
+    db.refresh(asset)
+    return AssetLifecycleResponseSchema(
+        asset_id=asset.id,
+        lifecycle_status=asset.lifecycle_status,
+        trashed_at=asset.trashed_at,
+    )
+
+
+@router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def permanently_delete_asset(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _require_user_asset(db, asset_id, current_user)
+    _require_trashed_lifecycle(asset)
+    paths = _collect_asset_relative_paths(db, asset.id)
+    db.delete(asset)
+    db.commit()
+    _unlink_asset_rel_paths(paths)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

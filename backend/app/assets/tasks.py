@@ -8,6 +8,7 @@ from wand.image import Image
 
 from app.assets.ml_service import detect_faces
 from app.assets.models import (
+    ASSET_LIFECYCLE_ACTIVE,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     TASK_STATUS_PENDING,
@@ -345,6 +346,7 @@ def _latest_versions_query(db, batch_id):
         )
         .join(Asset, AssetVersion.asset_id == Asset.id)
         .filter(Asset.import_batch_id == batch_id)
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
         .group_by(AssetVersion.asset_id)
         .subquery()
     )
@@ -399,6 +401,9 @@ def process_asset_preview(version_id: str):
 
         asset = db.query(Asset).filter_by(id=version.asset_id).first()
         if not asset:
+            return
+
+        if asset.lifecycle_status != ASSET_LIFECYCLE_ACTIVE:
             return
 
         original_file = _get_original_file(db, asset.id)
@@ -511,6 +516,9 @@ def process_asset_ml(version_id: str):
 
         asset = db.query(Asset).filter_by(id=version.asset_id).first()
         if not asset:
+            return
+
+        if asset.lifecycle_status != ASSET_LIFECYCLE_ACTIVE:
             return
 
         batch_id = asset.import_batch_id

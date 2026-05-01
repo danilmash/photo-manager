@@ -91,7 +91,15 @@ class AssetListItemSchema(BaseModel):
     title: str | None
     created_at: datetime
     updated_at: datetime
+    lifecycle_status: str
+    trashed_at: datetime | None = None
     version: AssetVersionSummarySchema | None
+
+
+class AssetLifecycleResponseSchema(BaseModel):
+    asset_id: UUID
+    lifecycle_status: str
+    trashed_at: datetime | None = None
 
 
 class AssetListResponseSchema(BaseModel):

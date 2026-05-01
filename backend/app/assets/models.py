@@ -22,6 +22,9 @@ VERSION_STATUS_READY = "ready"
 VERSION_STATUS_PARTIAL_ERROR = "partial_error"
 VERSION_STATUS_ERROR = "error"
 
+ASSET_LIFECYCLE_ACTIVE = "active"
+ASSET_LIFECYCLE_TRASHED = "trashed"
+
 TASK_STATUS_PENDING = "pending"
 TASK_STATUS_PROCESSING = "processing"
 TASK_STATUS_COMPLETED = "completed"
@@ -96,8 +99,23 @@ class Asset(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    lifecycle_status = Column(
+        String(32),
+        nullable=False,
+        default=ASSET_LIFECYCLE_ACTIVE,
+    )
+    trashed_at = Column(TIMESTAMP, nullable=True)
+    trashed_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
-    owner = relationship("User", backref="assets")
+    owner = relationship(
+        "User",
+        foreign_keys=[owner_id],
+        back_populates="assets",
+    )
     import_batch = relationship("ImportBatch", back_populates="assets")
     files = relationship("File", back_populates="asset", cascade="all, delete-orphan")
     versions = relationship(

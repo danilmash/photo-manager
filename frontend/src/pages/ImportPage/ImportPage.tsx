@@ -1,17 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, Menu } from 'lucide-react';
+import { CheckCircle2, CircleAlert, Menu } from 'lucide-react';
 
+import type { AssetListItem } from '../../api/assets';
 import BatchAssetsGrid from '../../components/features/imports/BatchAssetsGrid';
+import DuplicateSourcesSection, {
+  duplicateSourcesToCarouselPhotos,
+} from '../../components/features/imports/DuplicateSourcesSection';
 import DropZone from '../../components/features/imports/DropZone';
 import ImportsSidebar from '../../components/features/imports/ImportsSidebar';
 import UploadProgressDrawer from '../../components/features/imports/UploadProgressDrawer';
+import Modal from '../../components/ui/Modal';
+import PhotoViewer from '../../components/ui/PhotoViewer';
 import pageLayout from '../../styles/page-layout.module.css';
 import { useImportSessionStore } from '../../stores/useImportSessionStore';
+import type {
+  ImportBatchDuplicateCandidateItem,
+  ImportBatchDuplicateGroup,
+} from '../../api/importBatches';
 
 import styles from './ImportPage.module.css';
 
 const DESKTOP_MEDIA_QUERY = '(min-width: 769px)';
+
+const EMPTY_DUP_GROUPS: ImportBatchDuplicateGroup[] = [];
+
+/** Тултип у значка под заголовком блока «Дубликаты в партии». */
+const DUPLICATE_SECTION_HELP_TOOLTIP =
+  'Учитываются только совпадения между фото этой партии после появления превью и хешей. Нажмите на источник — откроется просмотр: в карусели все источники с дубликатами, по кнопке «Кандидаты в дубликаты» или справа открывается дровер со списком кандидатов для текущего источника; для каждого кандидата можно вынести вердикт.';
 
 const STATUS_LABEL: Record<string, string> = {
   uploading: 'Загрузка',
@@ -72,9 +88,44 @@ export default function ImportPage() {
   const startBatchPolling = useImportSessionStore((s) => s.startBatchPolling);
   const stopBatchPolling = useImportSessionStore((s) => s.stopBatchPolling);
 
+  const duplicateGroups = useImportSessionStore((s) =>
+    batchId ? s.duplicateGroupsByBatch[batchId] ?? EMPTY_DUP_GROUPS : EMPTY_DUP_GROUPS,
+  );
+
+  const duplicateReviewedCount = useMemo(() => {
+    let n = 0;
+    for (const g of duplicateGroups) {
+      for (const c of g.candidates) {
+        if (c.review_decision != null) n += 1;
+      }
+    }
+    return n;
+  }, [duplicateGroups]);
+
+  const duplicateCandidatesTotal = useMemo(() => {
+    let n = 0;
+    for (const g of duplicateGroups) {
+      n += g.candidates.length;
+    }
+    return n;
+  }, [duplicateGroups]);
+
+  const duplicatesLoaded = useImportSessionStore((s) =>
+    batchId ? (s.duplicatesLoadedByBatch[batchId] ?? false) : false,
+  );
+  const duplicateDupFetchFailed = useImportSessionStore((s) =>
+    batchId ? (s.duplicateDupFetchFailedByBatch[batchId] ?? false) : false,
+  );
+
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [isCreating, setIsCreating] = useState<boolean>(false);
   const [isClosing, setIsClosing] = useState<boolean>(false);
+  const [dupClusterViewer, setDupClusterViewer] = useState<{
+    photos: AssetListItem[];
+    index: number;
+    batchId: string;
+    groups: ImportBatchDuplicateGroup[];
+  } | null>(null);
 
   useEffect(() => {
     setSidebarOpen(isDesktop);
@@ -156,6 +207,60 @@ export default function ImportPage() {
       setIsClosing(false);
     }
   }, [batchId, canClose, closeBatch, isClosing]);
+
+  useEffect(() => {
+    setDupClusterViewer(null);
+  }, [batchId]);
+
+  const handleOpenDuplicateCluster = useCallback(
+    (group: ImportBatchDuplicateGroup) => {
+      if (!batchId || duplicateGroups.length === 0) return;
+      const photos = duplicateSourcesToCarouselPhotos(duplicateGroups, activeAssets);
+      const idx = duplicateGroups.findIndex(
+        (g) => g.source_asset_id === group.source_asset_id,
+      );
+      setDupClusterViewer({
+        photos,
+        index: idx >= 0 ? idx : 0,
+        batchId,
+        groups: [...duplicateGroups],
+      });
+    },
+    [activeAssets, batchId, duplicateGroups],
+  );
+
+  const handleDupClusterCandidateReviewed = useCallback(
+    (updated: ImportBatchDuplicateCandidateItem) => {
+      if (!batchId) return;
+      setDupClusterViewer((v) => {
+        if (!v) return v;
+        const parentSourceId = v.groups.find((g) =>
+          g.candidates.some((c) => c.id === updated.id),
+        )?.source_asset_id;
+        if (parentSourceId) {
+          useImportSessionStore.getState().applyDuplicateCandidateDecision(
+            batchId,
+            parentSourceId,
+            updated,
+          );
+        }
+        const nextGroups = v.groups.map((g) => {
+          if (!g.candidates.some((c) => c.id === updated.id)) return g;
+          const nextCandidates = g.candidates.map((c) =>
+            c.id === updated.id ? { ...c, ...updated } : c,
+          );
+          const allReviewed = nextCandidates.every((c) => c.review_decision != null);
+          return {
+            ...g,
+            candidates: nextCandidates,
+            duplicate_review_status: allReviewed ? 'reviewed' : g.duplicate_review_status,
+          };
+        });
+        return { ...v, groups: nextGroups };
+      });
+    },
+    [batchId],
+  );
 
   return (
     <>
@@ -269,6 +374,61 @@ export default function ImportPage() {
                 </div>
               )}
 
+              <section
+                className={styles.duplicateSection}
+                aria-labelledby="import-dup-summary-title"
+              >
+                <div className={styles.duplicateSectionHead}>
+                  <h2
+                    id="import-dup-summary-title"
+                    className={styles.duplicateSectionTitle}
+                  >
+                    Дубликаты в партии
+                  </h2>
+                  <button
+                    type="button"
+                    className={styles.duplicateHelpBtn}
+                    title={DUPLICATE_SECTION_HELP_TOOLTIP}
+                    aria-label="Подробнее: как считаются дубликаты и как вынести вердикт"
+                  >
+                    <CircleAlert size={18} strokeWidth={2} aria-hidden />
+                  </button>
+                </div>
+                {!duplicatesLoaded ? (
+                  <p className={styles.duplicateMuted}>
+                    Подсчёт потенциальных дубликатов…
+                  </p>
+                ) : duplicateDupFetchFailed ? (
+                  <p className={styles.duplicateError}>
+                    Не удалось загрузить данные о дубликатах. Попробуйте
+                    обновить страницу.
+                  </p>
+                ) : (
+                  <>
+                    <p className={styles.duplicateLead}>
+                      Проверено дубликатов:{' '}
+                      <strong>{duplicateReviewedCount}</strong>
+                      {duplicateCandidatesTotal > 0 ? (
+                        <>
+                          {' '}
+                          из <strong>{duplicateCandidatesTotal}</strong>
+                        </>
+                      ) : null}
+                    </p>
+                    <DuplicateSourcesSection
+                      groups={duplicateGroups}
+                      onOpenDuplicateCluster={handleOpenDuplicateCluster}
+                    />
+                    {duplicateGroups.length === 0 ? (
+                      <p className={styles.duplicateMuted}>
+                        Пока нет групп «источник — кандидаты»: сканирование могло не
+                        найти совпадений или обработка превью ещё не завершилась.
+                      </p>
+                    ) : null}
+                  </>
+                )}
+              </section>
+
               <BatchAssetsGrid className={styles.assetsGrid} assets={activeAssets} />
             </>
           )}
@@ -276,6 +436,41 @@ export default function ImportPage() {
       </div>
 
       <UploadProgressDrawer batchId={batchId ?? null} />
+
+      <Modal
+        dark
+        variant="fullscreen"
+        isOpen={dupClusterViewer !== null}
+        onClose={() => setDupClusterViewer(null)}
+      >
+        {dupClusterViewer ? (
+          <PhotoViewer
+            importDuplicateSourcesReview={{
+              batchId: dupClusterViewer.batchId,
+              groups: dupClusterViewer.groups,
+              onCandidateReviewed: handleDupClusterCandidateReviewed,
+            }}
+            photos={dupClusterViewer.photos}
+            currentIndex={dupClusterViewer.index}
+            onClose={() => setDupClusterViewer(null)}
+            onPrevious={() =>
+              setDupClusterViewer((v) =>
+                v && v.index > 0 ? { ...v, index: v.index - 1 } : v,
+              )
+            }
+            onNext={() =>
+              setDupClusterViewer((v) =>
+                v && v.index < v.photos.length - 1
+                  ? { ...v, index: v.index + 1 }
+                  : v,
+              )
+            }
+            onSelect={(index) =>
+              setDupClusterViewer((v) => (v ? { ...v, index } : v))
+            }
+          />
+        ) : null}
+      </Modal>
     </>
   );
 }

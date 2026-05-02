@@ -162,6 +162,9 @@ class AssetViewerResponseSchema(BaseModel):
     photo: AssetPhotoInfoSchema
     faces: list[AssetViewerFaceSchema]
     faces_count: int
+    import_batch_id: UUID | None = None
+    duplicate_review_status: str | None = None
+    duplicate_of_asset_id: UUID | None = None
 
 
 class AssetMetadataSchema(BaseModel):

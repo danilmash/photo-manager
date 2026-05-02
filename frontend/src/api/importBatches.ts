@@ -84,3 +84,55 @@ export async function retryBatchFailedFaces(
   );
   return data;
 }
+
+/** Элемент группы дубликатов (ответ GET duplicate-groups). */
+export interface ImportBatchDuplicateCandidateItem {
+  id: string;
+  candidate_asset_id: string;
+  candidate_title: string | null;
+  candidate_preview_url: string | null;
+  duplicate_type: string;
+  score: number | null;
+  distance: number | null;
+  rank: number;
+  review_decision: string | null;
+}
+
+export interface ImportBatchDuplicateGroup {
+  source_asset_id: string;
+  source_title: string | null;
+  source_preview_url: string | null;
+  duplicate_review_status: string;
+  candidates: ImportBatchDuplicateCandidateItem[];
+}
+
+export interface ImportBatchDuplicatesResponse {
+  groups: ImportBatchDuplicateGroup[];
+}
+
+export async function getImportBatchDuplicateGroups(
+  batchId: string,
+): Promise<ImportBatchDuplicatesResponse> {
+  const { data } = await api.get<ImportBatchDuplicatesResponse>(
+    `/import-batches/${batchId}/duplicate-groups`,
+  );
+  return data;
+}
+
+/** Решение по паре источник ↔ кандидат (PATCH duplicate-candidates). */
+export type DuplicateReviewDecision =
+  | 'confirmed_duplicate'
+  | 'rejected'
+  | 'kept_both';
+
+export async function reviewImportBatchDuplicateCandidate(
+  batchId: string,
+  candidateRowId: string,
+  decision: DuplicateReviewDecision,
+): Promise<ImportBatchDuplicateCandidateItem> {
+  const { data } = await api.patch<ImportBatchDuplicateCandidateItem>(
+    `/import-batches/${batchId}/duplicate-candidates/${candidateRowId}`,
+    { decision },
+  );
+  return data;
+}

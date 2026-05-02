@@ -11,8 +11,11 @@ import {
   closeImportBatch,
   createImportBatch,
   getImportBatch,
+  getImportBatchDuplicateGroups,
   listImportBatches,
   type ImportBatch,
+  type ImportBatchDuplicateCandidateItem,
+  type ImportBatchDuplicateGroup,
 } from '../api/importBatches';
 import { useAssetsFeedStore } from './useAssetsFeedStore';
 
@@ -41,6 +44,14 @@ interface ImportSessionState {
   // состояния «загружается/ошибка» до появления ассета на бэке.
   uploadsByBatch: Record<string, UploadRow[]>;
 
+  /** Число пар «источник → кандидат» без решения (потенциальные дубликаты). */
+  duplicatePendingByBatch: Record<string, number>;
+  duplicatesLoadedByBatch: Record<string, boolean>;
+  /** Последний запрос duplicate-groups завершился ошибкой (остальное данные партии ок). */
+  duplicateDupFetchFailedByBatch: Record<string, boolean>;
+  /** Кэш ответа GET duplicate-groups по партиям (обновляется при успешном поллинге). */
+  duplicateGroupsByBatch: Record<string, ImportBatchDuplicateGroup[]>;
+
   fetchBatches: () => Promise<void>;
   createBatch: () => Promise<ImportBatch>;
   closeBatch: (batchId: string) => Promise<void>;
@@ -52,6 +63,13 @@ interface ImportSessionState {
 
   startBatchPolling: (batchId: string) => void;
   stopBatchPolling: () => void;
+
+  /** После PATCH вердикта по кандидату — обновить кэш групп и счётчик pending. */
+  applyDuplicateCandidateDecision: (
+    batchId: string,
+    sourceAssetId: string,
+    updated: ImportBatchDuplicateCandidateItem,
+  ) => void;
 }
 
 const POLL_INTERVAL_MS = 1500;
@@ -92,6 +110,18 @@ function mergeAssets(
         ...prev.filter((p) => !next.some((n) => n.asset_id === p.asset_id)),
       ]
     : Array.from(byId.values());
+}
+
+function countPendingDuplicateCandidates(
+  groups: ImportBatchDuplicateGroup[],
+): number {
+  let n = 0;
+  for (const g of groups) {
+    for (const c of g.candidates) {
+      if (c.review_decision == null) n += 1;
+    }
+  }
+  return n;
 }
 
 // Финальные статусы ассета — те, в которых бэкенд уже не будет их двигать
@@ -141,6 +171,10 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
   assetsByBatch: {},
   assetsLoadingByBatch: {},
   uploadsByBatch: {},
+  duplicatePendingByBatch: {},
+  duplicatesLoadedByBatch: {},
+  duplicateDupFetchFailedByBatch: {},
+  duplicateGroupsByBatch: {},
 
   fetchBatches: async () => {
     set({ isListLoading: true, listError: null });
@@ -329,62 +363,104 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
     pollBatchId = batchId;
 
     const tick = async () => {
-      // Если за время ожидания поллинг переключили — игнорируем результат.
       const currentTarget = pollBatchId;
       if (currentTarget !== batchId) return;
 
-      try {
-        const [assetsRes, batch] = await Promise.all([
-          listAssets({ batchId, limit: 200 }),
-          getImportBatch(batchId),
-        ]);
+      const settled = await Promise.allSettled([
+        listAssets({ batchId, limit: 200 }),
+        getImportBatch(batchId),
+        getImportBatchDuplicateGroups(batchId),
+      ]);
 
-        if (pollBatchId !== batchId) return;
+      if (pollBatchId !== batchId) return;
 
-        set((state) => {
-          const prevAssets = state.assetsByBatch[batchId] ?? [];
-          return {
-            batches: upsertBatch(state.batches, batch),
-            assetsByBatch: {
-              ...state.assetsByBatch,
-              [batchId]: mergeAssets(prevAssets, assetsRes.items),
-            },
-          };
-        });
+      const assetsResult = settled[0];
+      const batchResult = settled[1];
+      const dupResult = settled[2];
 
-        const state = get();
-        const assets = state.assetsByBatch[batchId];
-        const uploads = state.uploadsByBatch[batchId] ?? [];
-        const uploadsInFlight = uploads.some((u) => u.phase === 'uploading');
-        const allFinal =
-          !hasNonFinalAsset(assets) && (assets?.length ?? 0) > 0;
-        const batchFinal = batch.status !== 'processing';
+      if (assetsResult.status !== 'fulfilled' || batchResult.status !== 'fulfilled') {
+        return;
+      }
 
-        const idleEmptyUploading =
-          batch.status === 'uploading' &&
-          (batch.assets_count ?? 0) === 0 &&
-          !uploadsInFlight &&
-          (assets?.length ?? 0) === 0;
+      const assetsRes = assetsResult.value;
+      const batch = batchResult.value;
 
-        if (idleEmptyUploading) {
-          get().stopBatchPolling();
-        } else if (!uploadsInFlight && allFinal && batchFinal) {
-          get().stopBatchPolling();
-        }
+      let dupPending = get().duplicatePendingByBatch[batchId] ?? 0;
+      let dupLoaded = false;
+      let dupFetchFailed = false;
+      let dupGroupsForBatch: ImportBatchDuplicateGroup[] | undefined;
+      if (dupResult.status === 'fulfilled') {
+        dupPending = countPendingDuplicateCandidates(dupResult.value.groups);
+        dupLoaded = true;
+        dupFetchFailed = false;
+        dupGroupsForBatch = dupResult.value.groups;
+      } else if (dupResult.status === 'rejected') {
+        dupLoaded = true;
+        dupFetchFailed = true;
+      }
 
-        // Лента дома показывает всё, кроме error — обновляем её, как только
-        // среди ассетов появляются финальные (ready/partial_error).
-        if (
-          assets?.some(
-            (a) =>
-              a.version?.status === 'ready' ||
-              a.version?.status === 'partial_error',
-          )
-        ) {
-          maybeRefreshHomeFeed();
-        }
-      } catch {
-        // игнорируем одиночные ошибки, поллинг продолжается
+      set((state) => {
+        const prevAssets = state.assetsByBatch[batchId] ?? [];
+        return {
+          batches: upsertBatch(state.batches, batch),
+          assetsByBatch: {
+            ...state.assetsByBatch,
+            [batchId]: mergeAssets(prevAssets, assetsRes.items),
+          },
+          duplicatePendingByBatch: {
+            ...state.duplicatePendingByBatch,
+            [batchId]: dupPending,
+          },
+          duplicatesLoadedByBatch: dupLoaded
+            ? {
+                ...state.duplicatesLoadedByBatch,
+                [batchId]: true,
+              }
+            : state.duplicatesLoadedByBatch,
+          duplicateDupFetchFailedByBatch: dupLoaded
+            ? {
+                ...state.duplicateDupFetchFailedByBatch,
+                [batchId]: dupFetchFailed,
+              }
+            : state.duplicateDupFetchFailedByBatch,
+          duplicateGroupsByBatch:
+            dupGroupsForBatch !== undefined
+              ? {
+                  ...state.duplicateGroupsByBatch,
+                  [batchId]: dupGroupsForBatch,
+                }
+              : state.duplicateGroupsByBatch,
+        };
+      });
+
+      const state = get();
+      const assets = state.assetsByBatch[batchId];
+      const uploads = state.uploadsByBatch[batchId] ?? [];
+      const uploadsInFlight = uploads.some((u) => u.phase === 'uploading');
+      const allFinal =
+        !hasNonFinalAsset(assets) && (assets?.length ?? 0) > 0;
+      const batchFinal = batch.status !== 'processing';
+
+      const idleEmptyUploading =
+        batch.status === 'uploading' &&
+        (batch.assets_count ?? 0) === 0 &&
+        !uploadsInFlight &&
+        (assets?.length ?? 0) === 0;
+
+      if (idleEmptyUploading) {
+        get().stopBatchPolling();
+      } else if (!uploadsInFlight && allFinal && batchFinal) {
+        get().stopBatchPolling();
+      }
+
+      if (
+        assets?.some(
+          (a) =>
+            a.version?.status === 'ready' ||
+            a.version?.status === 'partial_error',
+        )
+      ) {
+        maybeRefreshHomeFeed();
       }
     };
 
@@ -401,6 +477,37 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
       pollTimer = null;
     }
     pollBatchId = null;
+  },
+
+  applyDuplicateCandidateDecision: (batchId, sourceAssetId, updated) => {
+    set((state) => {
+      const groups = state.duplicateGroupsByBatch[batchId];
+      if (!groups) return state;
+
+      const nextGroups = groups.map((g) => {
+        if (g.source_asset_id !== sourceAssetId) return g;
+        const candidates = g.candidates.map((c) =>
+          c.id === updated.id ? { ...c, ...updated } : c,
+        );
+        const allReviewed = candidates.every((c) => c.review_decision != null);
+        return {
+          ...g,
+          candidates,
+          duplicate_review_status: allReviewed ? 'reviewed' : g.duplicate_review_status,
+        };
+      });
+
+      return {
+        duplicateGroupsByBatch: {
+          ...state.duplicateGroupsByBatch,
+          [batchId]: nextGroups,
+        },
+        duplicatePendingByBatch: {
+          ...state.duplicatePendingByBatch,
+          [batchId]: countPendingDuplicateCandidates(nextGroups),
+        },
+      };
+    });
   },
 }));
 

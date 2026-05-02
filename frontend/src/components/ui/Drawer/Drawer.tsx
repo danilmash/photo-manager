@@ -7,6 +7,9 @@ import { useBodyScrollLock } from '../../../hooks/useBodyScrollLock';
 
 const DRAWER_WIDTH = 360;
 
+/** Ширина сдвига контента в режиме `behavior="move"` (для координации padding снаружи Drawer). */
+export const DRAWER_MOVE_PADDING_PX = DRAWER_WIDTH;
+
 interface DrawerProps {
     title?: string;
     open: boolean;
@@ -16,6 +19,8 @@ interface DrawerProps {
     behavior?: "overlap" | "move";
     // Если передан — дравер рендерится внутри этого элемента (для использования в модалках)
     portalTarget?: HTMLElement | null;
+    /** Если false — не трогать padding контейнера (родитель сам выставит при нескольких дроверах). */
+    adjustContainerPadding?: boolean;
 }
 
 export default function Drawer({
@@ -26,6 +31,7 @@ export default function Drawer({
     side = "right",
     behavior = "overlap",
     portalTarget,
+    adjustContainerPadding = true,
 }: DrawerProps) {
     const isContained = !!portalTarget; // режим внутри контейнера
 
@@ -43,7 +49,7 @@ export default function Drawer({
 
     // Сдвиг контента в режиме move
     useEffect(() => {
-        if (behavior !== "move") return;
+        if (behavior !== "move" || !adjustContainerPadding) return;
 
         // Целевой элемент: контейнер (модалка) или body
         const target = portalTarget ?? document.body;
@@ -56,9 +62,9 @@ export default function Drawer({
         target.style[prop] = open ? `${DRAWER_WIDTH}px` : "0px";
 
         return () => {
-        target.style[prop] = "0px";
+            target.style[prop] = "0px";
         };
-    }, [open, behavior, side, portalTarget, isContained]);
+    }, [open, behavior, side, portalTarget, isContained, adjustContainerPadding]);
 
     const drawer = (
         <>

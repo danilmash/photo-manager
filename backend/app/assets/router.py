@@ -747,6 +747,9 @@ def get_asset_viewer(
         photo=_build_photo_info(version, original),
         faces=faces,
         faces_count=len(faces),
+        import_batch_id=asset.import_batch_id,
+        duplicate_review_status=asset.duplicate_review_status,
+        duplicate_of_asset_id=asset.duplicate_of_asset_id,
     )
 
 

@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ChevronLeft, ChevronRight, Info, SlidersHorizontal } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Info,
+  SlidersHorizontal,
+} from 'lucide-react';
 
 import styles from './PhotoViewer.module.css';
+import type {
+  ImportBatchDuplicateCandidateItem,
+  ImportBatchDuplicateGroup,
+} from '../../../api/importBatches';
 import {
   createAssetVersion,
   getAssetViewer,
@@ -11,9 +22,11 @@ import {
 } from '../../../api/assets';
 import { DEFAULT_PHOTO_RECIPE, normalizeRecipe, type PhotoRecipe } from '../../../api/recipe';
 import Button from '../Button';
-import Drawer from '../Drawer';
+import Drawer, { DRAWER_MOVE_PADDING_PX } from '../Drawer';
 import PhotoCarousel from '../PhotoCarousel';
 import PhotoFacesPanel from '../PhotoFacesPanel';
+import ImportDuplicateCandidatesDrawer from './ImportDuplicateCandidatesDrawer';
+import PhotoDuplicatesDrawer from './PhotoDuplicatesDrawer';
 import PhotoEditDrawer from './PhotoEditDrawer';
 import {
   recipeLivePreviewDeltaStyle,
@@ -27,6 +40,14 @@ interface PhotoViewerProps {
   onNext: () => void;
   onSelect: (index: number) => void;
   onClose: () => void;
+  /**
+   * Режим импорта: карусель — все источники дубликатов в партии; кандидаты и вердикты — в дровере.
+   */
+  importDuplicateSourcesReview?: {
+    batchId: string;
+    groups: ImportBatchDuplicateGroup[];
+    onCandidateReviewed: (updated: ImportBatchDuplicateCandidateItem) => void;
+  };
 }
 
 type Direction = 1 | -1;
@@ -91,10 +112,13 @@ export default function PhotoViewer({
   onNext,
   onSelect,
   onClose,
+  importDuplicateSourcesReview,
 }: PhotoViewerProps) {
   const [direction, setDirection] = useState<Direction>(1);
   const [infoDrawerOpen, setInfoDrawerOpen] = useState(false);
   const [editDrawerOpen, setEditDrawerOpen] = useState(false);
+  const [duplicatesDrawerOpen, setDuplicatesDrawerOpen] = useState(false);
+  const [importDupDrawerOpen, setImportDupDrawerOpen] = useState(true);
   const [applyingVersion, setApplyingVersion] = useState(false);
   const [draftRecipe, setDraftRecipe] = useState<PhotoRecipe>(DEFAULT_PHOTO_RECIPE);
   const [editBaselineRecipe, setEditBaselineRecipe] = useState<PhotoRecipe | null>(null);
@@ -240,7 +264,40 @@ export default function PhotoViewer({
 
   useEffect(() => {
     setEditDrawerOpen(false);
+    setDuplicatesDrawerOpen(false);
   }, [currentPhoto?.asset_id]);
+
+  const currentImportDupGroup = useMemo(() => {
+    if (!importDuplicateSourcesReview) return null;
+    return importDuplicateSourcesReview.groups[currentIndex] ?? null;
+  }, [importDuplicateSourcesReview, currentIndex]);
+
+  const duplicateBatchId = currentViewer?.import_batch_id ?? null;
+  const duplicateReviewStatus = currentViewer?.duplicate_review_status ?? null;
+  const duplicateOfId = currentViewer?.duplicate_of_asset_id ?? null;
+  const showDuplicatesEntry =
+    !importDuplicateSourcesReview &&
+    Boolean(duplicateBatchId) &&
+    (duplicateReviewStatus === 'has_duplicates' || duplicateOfId != null);
+
+  const moveDrawerPaddingOpen =
+    infoDrawerOpen ||
+    editDrawerOpen ||
+    (showDuplicatesEntry && duplicatesDrawerOpen) ||
+    Boolean(importDuplicateSourcesReview && currentImportDupGroup && importDupDrawerOpen);
+
+  useEffect(() => {
+    const el = viewerRef.current;
+    if (!el) return;
+
+    el.style.transition = 'padding 0.3s ease';
+    el.style.boxSizing = 'border-box';
+    el.style.paddingRight = moveDrawerPaddingOpen ? `${DRAWER_MOVE_PADDING_PX}px` : '0px';
+
+    return () => {
+      el.style.paddingRight = '0px';
+    };
+  }, [moveDrawerPaddingOpen]);
 
   useEffect(() => {
     if (!editDrawerOpen) {
@@ -409,17 +466,49 @@ export default function PhotoViewer({
             variant="ghost"
             onClick={() => {
               setEditDrawerOpen(false);
+              setDuplicatesDrawerOpen(false);
+              setImportDupDrawerOpen(false);
               setInfoDrawerOpen(true);
             }}
             icon={<Info />}
             size="xl"
             aria-label="Информация"
           />
+          {importDuplicateSourcesReview ? (
+            <Button
+              color="muted"
+              variant="ghost"
+              onClick={() => {
+                setInfoDrawerOpen(false);
+                setEditDrawerOpen(false);
+                setDuplicatesDrawerOpen(false);
+                setImportDupDrawerOpen(true);
+              }}
+              icon={<Copy />}
+              size="xl"
+              aria-label="Кандидаты в дубликаты"
+            />
+          ) : showDuplicatesEntry && duplicateBatchId ? (
+            <Button
+              color="muted"
+              variant="ghost"
+              onClick={() => {
+                setInfoDrawerOpen(false);
+                setEditDrawerOpen(false);
+                setDuplicatesDrawerOpen(true);
+              }}
+              icon={<Copy />}
+              size="xl"
+              aria-label="Дубликаты и похожие"
+            />
+          ) : null}
           <Button
             color="muted"
             variant="ghost"
             onClick={() => {
               setInfoDrawerOpen(false);
+              setDuplicatesDrawerOpen(false);
+              setImportDupDrawerOpen(false);
               setEditDrawerOpen(true);
             }}
             icon={<SlidersHorizontal />}
@@ -435,6 +524,7 @@ export default function PhotoViewer({
           onClose={() => setInfoDrawerOpen(false)}
           side="right"
           portalTarget={viewerRef.current}
+          adjustContainerPadding={false}
         >
           <div style={{ padding: 16, display: 'grid', gap: 20 }}>
             {viewerLoading && !currentViewer ? (
@@ -537,6 +627,7 @@ export default function PhotoViewer({
           onClose={() => setEditDrawerOpen(false)}
           side="right"
           portalTarget={viewerRef.current}
+          adjustContainerPadding={false}
         >
           <PhotoEditDrawer
             recipe={draftRecipe}
@@ -546,6 +637,30 @@ export default function PhotoViewer({
             disabled={!currentViewer?.version}
           />
         </Drawer>
+
+        {showDuplicatesEntry && duplicateBatchId ? (
+          <PhotoDuplicatesDrawer
+            open={duplicatesDrawerOpen}
+            onClose={() => setDuplicatesDrawerOpen(false)}
+            portalTarget={viewerRef.current}
+            assetId={currentPhoto.asset_id}
+            importBatchId={duplicateBatchId}
+            duplicateOfAssetId={duplicateOfId}
+            adjustContainerPadding={false}
+          />
+        ) : null}
+
+        {importDuplicateSourcesReview && currentImportDupGroup ? (
+          <ImportDuplicateCandidatesDrawer
+            open={importDupDrawerOpen}
+            onClose={() => setImportDupDrawerOpen(false)}
+            portalTarget={viewerRef.current}
+            batchId={importDuplicateSourcesReview.batchId}
+            group={currentImportDupGroup}
+            onCandidateReviewed={importDuplicateSourcesReview.onCandidateReviewed}
+            adjustContainerPadding={false}
+          />
+        ) : null}
       </div>
 
       <div ref={stageRef} className={styles.stage}>
@@ -623,6 +738,8 @@ export default function PhotoViewer({
                 onClick={() => {
                   setActiveFaceId(box.id);
                   setEditDrawerOpen(false);
+                  setDuplicatesDrawerOpen(false);
+                  setImportDupDrawerOpen(false);
                   setInfoDrawerOpen(true);
                 }}
               >

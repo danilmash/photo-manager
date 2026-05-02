@@ -170,6 +170,10 @@ export interface AssetViewer {
   photo: AssetPhotoInfo;
   faces: AssetViewerFace[];
   faces_count: number;
+  /** Партия импорта; без неё список дубликатов из сканера недоступен. */
+  import_batch_id?: string | null;
+  duplicate_review_status?: string | null;
+  duplicate_of_asset_id?: string | null;
 }
 
 export async function getAssetViewer(assetId: string): Promise<AssetViewer> {

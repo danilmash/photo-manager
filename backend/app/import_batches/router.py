@@ -1,4 +1,6 @@
 import uuid as uuid_mod
+from collections import defaultdict
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, select
@@ -6,11 +8,17 @@ from sqlalchemy.orm import Session
 
 from app.assets.models import (
     ASSET_LIFECYCLE_ACTIVE,
+    DUPLICATE_DECISION_CONFIRMED,
+    DUPLICATE_DECISION_KEPT_BOTH,
+    DUPLICATE_DECISION_REJECTED,
+    DUPLICATE_REVIEW_PENDING,
+    DUPLICATE_REVIEW_REVIEWED,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     TASK_STATUS_PENDING,
     TASK_STATUS_PROCESSING,
     Asset,
+    AssetDuplicateCandidate,
     AssetVersion,
     File as AssetFileModel,
     apply_version_status,
@@ -25,7 +33,11 @@ from app.import_batches.models import (
     ImportBatch,
 )
 from app.import_batches.schemas import (
+    DuplicateCandidateReviewRequest,
     ImportBatchCreateRequest,
+    ImportBatchDuplicateCandidateItemSchema,
+    ImportBatchDuplicateGroupSchema,
+    ImportBatchDuplicatesResponseSchema,
     ImportBatchReviewAssetItemSchema,
     ImportBatchReviewAssetsResponseSchema,
     ImportBatchRetrySummarySchema,
@@ -82,6 +94,47 @@ def _build_file_url(file_id: uuid_mod.UUID | None) -> str | None:
     if not file_id:
         return None
     return f"/api/v1/assets/files/{file_id}"
+
+
+def _preview_file_ids_for_assets(
+    db: Session,
+    batch_id: uuid_mod.UUID,
+    asset_ids: set[uuid_mod.UUID],
+) -> dict[uuid_mod.UUID, uuid_mod.UUID]:
+    if not asset_ids:
+        return {}
+    latest_sq = _latest_versions_sq(db, batch_id)
+    version_rows = (
+        db.query(AssetVersion.id, AssetVersion.asset_id)
+        .join(
+            latest_sq,
+            and_(
+                AssetVersion.asset_id == latest_sq.c.asset_id,
+                AssetVersion.version_number == latest_sq.c.max_version_number,
+            ),
+        )
+        .filter(AssetVersion.asset_id.in_(asset_ids))
+        .all()
+    )
+    vid_to_aid = {row.id: row.asset_id for row in version_rows}
+    version_ids = list(vid_to_aid.keys())
+    if not version_ids:
+        return {}
+    files = (
+        db.query(AssetFileModel)
+        .filter(
+            AssetFileModel.asset_version_id.in_(version_ids),
+            AssetFileModel.purpose == "preview",
+        )
+        .order_by(AssetFileModel.created_at.desc())
+        .all()
+    )
+    out: dict[uuid_mod.UUID, uuid_mod.UUID] = {}
+    for f in files:
+        aid = vid_to_aid.get(f.asset_version_id)
+        if aid is not None and aid not in out:
+            out[aid] = f.id
+    return out
 
 
 @router.post(
@@ -503,4 +556,168 @@ def retry_failed_faces(
     return ImportBatchRetrySummarySchema(
         batch_id=batch.id,
         restarted=len(version_ids),
+    )
+
+
+@router.get(
+    "/{batch_id}/duplicate-groups",
+    response_model=ImportBatchDuplicatesResponseSchema,
+)
+def list_import_batch_duplicate_groups(
+    batch_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    candidates = (
+        db.query(AssetDuplicateCandidate)
+        .join(Asset, AssetDuplicateCandidate.source_asset_id == Asset.id)
+        .filter(
+            Asset.import_batch_id == batch_id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+        )
+        .order_by(
+            AssetDuplicateCandidate.source_asset_id,
+            AssetDuplicateCandidate.rank,
+        )
+        .all()
+    )
+
+    grouped: dict[uuid_mod.UUID, list[AssetDuplicateCandidate]] = defaultdict(list)
+    asset_ids: set[uuid_mod.UUID] = set()
+    for row in candidates:
+        grouped[row.source_asset_id].append(row)
+        asset_ids.add(row.source_asset_id)
+        asset_ids.add(row.candidate_asset_id)
+
+    preview_map = _preview_file_ids_for_assets(db, batch_id, asset_ids)
+    assets_meta = {
+        a.id: a for a in db.query(Asset).filter(Asset.id.in_(asset_ids)).all()
+    }
+
+    groups: list[ImportBatchDuplicateGroupSchema] = []
+    for source_id, rows in grouped.items():
+        src = assets_meta.get(source_id)
+        groups.append(
+            ImportBatchDuplicateGroupSchema(
+                source_asset_id=source_id,
+                source_title=src.title if src else None,
+                source_preview_url=_build_file_url(preview_map.get(source_id)),
+                duplicate_review_status=(
+                    src.duplicate_review_status if src else DUPLICATE_REVIEW_PENDING
+                ),
+                candidates=[
+                    ImportBatchDuplicateCandidateItemSchema(
+                        id=r.id,
+                        candidate_asset_id=r.candidate_asset_id,
+                        candidate_title=(
+                            assets_meta[r.candidate_asset_id].title
+                            if r.candidate_asset_id in assets_meta
+                            else None
+                        ),
+                        candidate_preview_url=_build_file_url(
+                            preview_map.get(r.candidate_asset_id),
+                        ),
+                        duplicate_type=r.duplicate_type,
+                        score=r.score,
+                        distance=r.distance,
+                        rank=r.rank,
+                        review_decision=r.review_decision,
+                    )
+                    for r in rows
+                ],
+            )
+        )
+
+    return ImportBatchDuplicatesResponseSchema(groups=groups)
+
+
+@router.patch(
+    "/{batch_id}/duplicate-candidates/{candidate_row_id}",
+    response_model=ImportBatchDuplicateCandidateItemSchema,
+)
+def review_import_batch_duplicate_candidate(
+    batch_id: uuid_mod.UUID,
+    candidate_row_id: uuid_mod.UUID,
+    body: DuplicateCandidateReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    candidate_row = db.query(AssetDuplicateCandidate).filter_by(id=candidate_row_id).first()
+    if not candidate_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Запись кандидата не найдена",
+        )
+
+    source_asset = db.query(Asset).filter_by(id=candidate_row.source_asset_id).first()
+    if not source_asset or source_asset.import_batch_id != batch_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Запись кандидата не найдена",
+        )
+
+    cand_asset = db.query(Asset).filter_by(id=candidate_row.candidate_asset_id).first()
+    if not cand_asset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ассет-кандидат не найден",
+        )
+
+    if body.decision == DUPLICATE_DECISION_CONFIRMED:
+        cand_asset.duplicate_of_asset_id = candidate_row.source_asset_id
+    elif body.decision in (DUPLICATE_DECISION_REJECTED, DUPLICATE_DECISION_KEPT_BOTH):
+        if cand_asset.duplicate_of_asset_id == candidate_row.source_asset_id:
+            cand_asset.duplicate_of_asset_id = None
+
+    candidate_row.review_decision = body.decision
+    candidate_row.reviewed_at = datetime.utcnow()
+    candidate_row.reviewed_by_user_id = current_user.id
+    cand_asset.duplicate_review_status = DUPLICATE_REVIEW_REVIEWED
+
+    db.flush()
+    pending_for_source = (
+        db.query(func.count(AssetDuplicateCandidate.id))
+        .filter(
+            AssetDuplicateCandidate.source_asset_id == candidate_row.source_asset_id,
+            AssetDuplicateCandidate.review_decision.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    if pending_for_source == 0:
+        source_asset.duplicate_review_status = DUPLICATE_REVIEW_REVIEWED
+
+    db.commit()
+
+    preview_map = _preview_file_ids_for_assets(
+        db,
+        batch_id,
+        {candidate_row.candidate_asset_id},
+    )
+    return ImportBatchDuplicateCandidateItemSchema(
+        id=candidate_row.id,
+        candidate_asset_id=candidate_row.candidate_asset_id,
+        candidate_title=cand_asset.title,
+        candidate_preview_url=_build_file_url(
+            preview_map.get(candidate_row.candidate_asset_id),
+        ),
+        duplicate_type=candidate_row.duplicate_type,
+        score=candidate_row.score,
+        distance=candidate_row.distance,
+        rank=candidate_row.rank,
+        review_decision=candidate_row.review_decision,
     )

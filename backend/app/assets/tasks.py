@@ -7,6 +7,11 @@ from wand.color import Color
 from wand.image import Image
 
 from app.assets.ml_service import detect_faces
+from app.assets.duplicate_detection import (
+    batch_previews_all_terminal,
+    compute_original_hashes,
+    run_duplicate_scan_for_batch,
+)
 from app.assets.models import (
     ASSET_LIFECYCLE_ACTIVE,
     TASK_STATUS_COMPLETED,
@@ -386,6 +391,19 @@ def _finalize_batch_if_done(db, batch_id) -> None:
         db.commit()
 
 
+@celery.task(name="app.assets.tasks.scan_import_batch_duplicates")
+def scan_import_batch_duplicates(batch_id: str) -> None:
+    try:
+        bid = uuid.UUID(batch_id)
+    except ValueError:
+        return
+    db = SessionLocal()
+    try:
+        run_duplicate_scan_for_batch(db, bid)
+    finally:
+        db.close()
+
+
 @celery.task(name="app.assets.tasks.process_asset_preview")
 def process_asset_preview(version_id: str):
     db = SessionLocal()
@@ -427,6 +445,11 @@ def process_asset_preview(version_id: str):
                 img.auto_orient()
                 original_file.width = img.width
                 original_file.height = img.height
+
+                sha256_hex, phash_hex, dhash_hex = compute_original_hashes(file_path, img)
+                version.sha256 = sha256_hex
+                version.phash = phash_hex
+                version.dhash = dhash_hex
 
                 meta = _extract_metadata(img) or {}
                 if version.exif is None and isinstance(meta.get("exif"), dict):
@@ -479,6 +502,11 @@ def process_asset_preview(version_id: str):
             version.preview_error = None
             apply_version_status(version)
             db.commit()
+
+            if asset.import_batch_id and batch_previews_all_terminal(
+                db, asset.import_batch_id
+            ):
+                scan_import_batch_duplicates.delay(str(asset.import_batch_id))
 
             batch = (
                 db.query(ImportBatch).filter_by(id=asset.import_batch_id).first()

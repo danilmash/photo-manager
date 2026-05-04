@@ -17,6 +17,10 @@ import {
   type ImportBatchDuplicateCandidateItem,
   type ImportBatchDuplicateGroup,
 } from '../api/importBatches';
+import {
+  getImportBatchFaceIdentityClusters,
+  type ImportBatchFaceCluster,
+} from '../api/faces';
 import { useAssetsFeedStore } from './useAssetsFeedStore';
 
 export type UploadPhase = 'uploading' | 'uploaded' | 'error';
@@ -51,6 +55,9 @@ interface ImportSessionState {
   duplicateDupFetchFailedByBatch: Record<string, boolean>;
   /** Кэш ответа GET duplicate-groups по партиям (обновляется при успешном поллинге). */
   duplicateGroupsByBatch: Record<string, ImportBatchDuplicateGroup[]>;
+  faceClustersLoadedByBatch: Record<string, boolean>;
+  faceClustersFetchFailedByBatch: Record<string, boolean>;
+  faceClustersByBatch: Record<string, ImportBatchFaceCluster[]>;
 
   fetchBatches: () => Promise<void>;
   createBatch: () => Promise<ImportBatch>;
@@ -69,6 +76,16 @@ interface ImportSessionState {
     batchId: string,
     sourceAssetId: string,
     updated: ImportBatchDuplicateCandidateItem,
+  ) => void;
+
+  updateFaceClusterAssignment: (
+    batchId: string,
+    identityId: string,
+    patch: {
+      person_id: string | null;
+      person_name: string | null;
+      review_required_count: number;
+    },
   ) => void;
 }
 
@@ -175,6 +192,9 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
   duplicatesLoadedByBatch: {},
   duplicateDupFetchFailedByBatch: {},
   duplicateGroupsByBatch: {},
+  faceClustersLoadedByBatch: {},
+  faceClustersFetchFailedByBatch: {},
+  faceClustersByBatch: {},
 
   fetchBatches: async () => {
     set({ isListLoading: true, listError: null });
@@ -370,6 +390,7 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
         listAssets({ batchId, limit: 200 }),
         getImportBatch(batchId),
         getImportBatchDuplicateGroups(batchId),
+        getImportBatchFaceIdentityClusters(batchId),
       ]);
 
       if (pollBatchId !== batchId) return;
@@ -377,6 +398,7 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
       const assetsResult = settled[0];
       const batchResult = settled[1];
       const dupResult = settled[2];
+      const faceClustersResult = settled[3];
 
       if (assetsResult.status !== 'fulfilled' || batchResult.status !== 'fulfilled') {
         return;
@@ -397,6 +419,18 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
       } else if (dupResult.status === 'rejected') {
         dupLoaded = true;
         dupFetchFailed = true;
+      }
+
+      let faceClustersLoaded = false;
+      let faceClustersFetchFailed = false;
+      let faceClustersForBatch: ImportBatchFaceCluster[] | undefined;
+      if (faceClustersResult.status === 'fulfilled') {
+        faceClustersLoaded = true;
+        faceClustersFetchFailed = false;
+        faceClustersForBatch = faceClustersResult.value;
+      } else if (faceClustersResult.status === 'rejected') {
+        faceClustersLoaded = true;
+        faceClustersFetchFailed = true;
       }
 
       set((state) => {
@@ -430,6 +464,25 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
                   [batchId]: dupGroupsForBatch,
                 }
               : state.duplicateGroupsByBatch,
+          faceClustersLoadedByBatch: faceClustersLoaded
+            ? {
+                ...state.faceClustersLoadedByBatch,
+                [batchId]: true,
+              }
+            : state.faceClustersLoadedByBatch,
+          faceClustersFetchFailedByBatch: faceClustersLoaded
+            ? {
+                ...state.faceClustersFetchFailedByBatch,
+                [batchId]: faceClustersFetchFailed,
+              }
+            : state.faceClustersFetchFailedByBatch,
+          faceClustersByBatch:
+            faceClustersForBatch !== undefined
+              ? {
+                  ...state.faceClustersByBatch,
+                  [batchId]: faceClustersForBatch,
+                }
+              : state.faceClustersByBatch,
         };
       });
 
@@ -505,6 +558,37 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
         duplicatePendingByBatch: {
           ...state.duplicatePendingByBatch,
           [batchId]: countPendingDuplicateCandidates(nextGroups),
+        },
+      };
+    });
+  },
+
+  updateFaceClusterAssignment: (batchId, identityId, patch) => {
+    set((state) => {
+      const clusters = state.faceClustersByBatch[batchId];
+      if (!clusters) return state;
+
+      return {
+        faceClustersByBatch: {
+          ...state.faceClustersByBatch,
+          [batchId]: clusters.map((cluster) =>
+            cluster.identity_id === identityId
+              ? {
+                  ...cluster,
+                  person_id: patch.person_id,
+                  person_name: patch.person_name,
+                  review_required_count: patch.review_required_count,
+                  detections: cluster.detections.map((detection) => ({
+                    ...detection,
+                    review_required: patch.review_required_count > 0,
+                    review_state:
+                      patch.review_required_count > 0
+                        ? detection.review_state
+                        : 'user_confirmed',
+                  })),
+                }
+              : cluster,
+          ),
         },
       };
     });

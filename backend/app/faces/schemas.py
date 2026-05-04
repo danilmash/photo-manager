@@ -51,6 +51,14 @@ class AssignNewPersonRequest(BaseModel):
     name: str | None = ""
 
 
+class AssignIdentityPersonRequest(BaseModel):
+    person_id: UUID
+
+
+class AssignIdentityNewPersonRequest(BaseModel):
+    name: str | None = ""
+
+
 class FaceAssignmentResponse(BaseModel):
     detection_id: UUID
     identity_id: UUID | None
@@ -79,3 +87,32 @@ class FaceDetectionSchema(BaseModel):
 
     identity: FaceIdentitySchema | None = None
     candidates: list[FaceCandidateSchema] = []
+
+
+class ImportBatchFaceClusterDetectionSchema(BaseModel):
+    id: UUID
+    asset_id: UUID
+    asset_title: str | None = None
+    crop_url: str | None = None
+    confidence: float | None = None
+    quality_score: float | None = None
+    review_required: bool
+    review_state: str | None = None
+
+
+class ImportBatchFaceClusterSchema(BaseModel):
+    identity_id: UUID
+    person_id: UUID | None = None
+    person_name: str | None = None
+    cover_url: str | None = None
+    samples_count: int
+    detections_count: int
+    review_required_count: int
+    detections: list[ImportBatchFaceClusterDetectionSchema]
+
+
+class IdentityAssignmentResponse(BaseModel):
+    identity_id: UUID
+    person_id: UUID | None
+    person_name: str | None = None
+    review_required_count: int

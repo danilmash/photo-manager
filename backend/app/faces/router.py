@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.assets.models import ASSET_LIFECYCLE_ACTIVE, Asset
 from app.users.dependencies import get_current_user
 from app.users.models import User
 from app.faces.models import (
@@ -21,9 +22,14 @@ from app.faces.models import (
 )
 from app.faces.schemas import (
     AssignNewPersonRequest,
+    AssignIdentityNewPersonRequest,
+    AssignIdentityPersonRequest,
     AssignPersonRequest,
     AssignIdentityRequest,
     FaceAssignmentResponse,
+    IdentityAssignmentResponse,
+    ImportBatchFaceClusterDetectionSchema,
+    ImportBatchFaceClusterSchema,
     PersonListItemSchema,
 )
 from app.faces.services import (
@@ -69,6 +75,56 @@ def _mark_detection_reviewed(
     )
     det.reviewed_by_user_id = current_user.id
     det.reviewed_at = datetime.utcnow()
+
+
+def _mark_identity_batch_reviewed(
+    db: Session,
+    identity_id: uuid_mod.UUID,
+    batch_id: uuid_mod.UUID,
+    current_user: User,
+) -> int:
+    detections = (
+        db.query(FaceDetection)
+        .join(Asset, FaceDetection.asset_id == Asset.id)
+        .filter(
+            FaceDetection.identity_id == identity_id,
+            Asset.import_batch_id == batch_id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+        )
+        .all()
+    )
+    for det in detections:
+        corrected = (
+            det.model_identity_id is not None
+            and det.model_identity_id != det.identity_id
+        )
+        _mark_detection_reviewed(det, current_user, corrected=corrected)
+    return len(detections)
+
+
+def _identity_assignment_response(
+    db: Session,
+    identity: FaceIdentity,
+    batch_id: uuid_mod.UUID,
+) -> IdentityAssignmentResponse:
+    pending = (
+        db.query(func.count(FaceDetection.id))
+        .join(Asset, FaceDetection.asset_id == Asset.id)
+        .filter(
+            FaceDetection.identity_id == identity.id,
+            FaceDetection.review_required.is_(True),
+            Asset.import_batch_id == batch_id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+        )
+        .scalar()
+        or 0
+    )
+    return IdentityAssignmentResponse(
+        identity_id=identity.id,
+        person_id=identity.person_id,
+        person_name=identity.person.name if identity.person else None,
+        review_required_count=pending,
+    )
 
 
 @router.post(
@@ -237,6 +293,161 @@ def unassign_identity(
         assignment_source=det.assignment_source,
         is_reference=False,
     )
+
+
+@router.get(
+    "/import-batches/{batch_id}/identity-clusters",
+    response_model=list[ImportBatchFaceClusterSchema],
+)
+def list_import_batch_identity_clusters(
+    batch_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = (
+        db.query(FaceIdentity)
+        .join(FaceDetection, FaceDetection.identity_id == FaceIdentity.id)
+        .join(Asset, FaceDetection.asset_id == Asset.id)
+        .filter(
+            Asset.import_batch_id == batch_id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+            Asset.owner_id == current_user.id,
+        )
+        .distinct()
+        .order_by(FaceIdentity.samples_count.desc(), FaceIdentity.created_at.asc())
+        .all()
+    )
+
+    clusters: list[ImportBatchFaceClusterSchema] = []
+    for identity in rows:
+        detections = (
+            db.query(FaceDetection, Asset.title)
+            .join(Asset, FaceDetection.asset_id == Asset.id)
+            .filter(
+                FaceDetection.identity_id == identity.id,
+                Asset.import_batch_id == batch_id,
+                Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+                Asset.owner_id == current_user.id,
+            )
+            .order_by(
+                FaceDetection.review_required.desc(),
+                FaceDetection.quality_score.desc().nullslast(),
+                FaceDetection.confidence.desc(),
+            )
+            .all()
+        )
+
+        detection_items = [
+            ImportBatchFaceClusterDetectionSchema(
+                id=det.id,
+                asset_id=det.asset_id,
+                asset_title=asset_title,
+                crop_url=_build_crop_url(det.id),
+                confidence=det.confidence,
+                quality_score=det.quality_score,
+                review_required=det.review_required,
+                review_state=det.review_state,
+            )
+            for det, asset_title in detections
+        ]
+        review_required_count = sum(1 for item in detection_items if item.review_required)
+        clusters.append(
+            ImportBatchFaceClusterSchema(
+                identity_id=identity.id,
+                person_id=identity.person_id,
+                person_name=identity.person.name if identity.person else None,
+                cover_url=_build_crop_url(identity.cover_face_id),
+                samples_count=identity.samples_count,
+                detections_count=len(detection_items),
+                review_required_count=review_required_count,
+                detections=detection_items,
+            )
+        )
+
+    return clusters
+
+
+@router.post(
+    "/import-batches/{batch_id}/identity-clusters/{identity_id}/assign-person",
+    response_model=IdentityAssignmentResponse,
+)
+def assign_import_batch_identity_person(
+    batch_id: uuid_mod.UUID,
+    identity_id: uuid_mod.UUID,
+    body: AssignIdentityPersonRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    identity = _get_identity_or_404(db, identity_id)
+    person = db.query(Person).filter_by(id=body.person_id).first()
+    if not person:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Person not found",
+        )
+
+    identity.person_id = person.id
+    if person.cover_face_id is None:
+        person.cover_face_id = identity.cover_face_id
+    _mark_identity_batch_reviewed(db, identity.id, batch_id, current_user)
+    db.commit()
+    return _identity_assignment_response(db, identity, batch_id)
+
+
+@router.post(
+    "/import-batches/{batch_id}/identity-clusters/{identity_id}/assign-new-person",
+    response_model=IdentityAssignmentResponse,
+)
+def assign_import_batch_identity_new_person(
+    batch_id: uuid_mod.UUID,
+    identity_id: uuid_mod.UUID,
+    body: AssignIdentityNewPersonRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    identity = _get_identity_or_404(db, identity_id)
+    person = Person(name=(body.name or "").strip())
+    db.add(person)
+    db.flush()
+
+    identity.person_id = person.id
+    if person.cover_face_id is None:
+        person.cover_face_id = identity.cover_face_id
+    _mark_identity_batch_reviewed(db, identity.id, batch_id, current_user)
+    db.commit()
+    return _identity_assignment_response(db, identity, batch_id)
+
+
+@router.post(
+    "/import-batches/{batch_id}/identity-clusters/{identity_id}/unassign",
+    response_model=IdentityAssignmentResponse,
+)
+def unassign_import_batch_identity_person(
+    batch_id: uuid_mod.UUID,
+    identity_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    identity = _get_identity_or_404(db, identity_id)
+    identity.person_id = None
+    detections = (
+        db.query(FaceDetection)
+        .join(Asset, FaceDetection.asset_id == Asset.id)
+        .filter(
+            FaceDetection.identity_id == identity.id,
+            Asset.import_batch_id == batch_id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+            Asset.owner_id == current_user.id,
+        )
+        .all()
+    )
+    for det in detections:
+        det.review_required = True
+        det.review_state = FACE_REVIEW_STATE_UNRESOLVED
+        det.reviewed_by_user_id = current_user.id
+        det.reviewed_at = datetime.utcnow()
+    db.commit()
+    return _identity_assignment_response(db, identity, batch_id)
 
 
 @router.get("/crops/{detection_id}")

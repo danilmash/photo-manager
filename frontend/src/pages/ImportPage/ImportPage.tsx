@@ -7,6 +7,7 @@ import BatchAssetsGrid from '../../components/features/imports/BatchAssetsGrid';
 import DuplicateSourcesSection, {
   duplicateSourcesToCarouselPhotos,
 } from '../../components/features/imports/DuplicateSourcesSection';
+import FaceIdentityClustersSection from '../../components/features/imports/FaceIdentityClustersSection';
 import DropZone from '../../components/features/imports/DropZone';
 import ImportsSidebar from '../../components/features/imports/ImportsSidebar';
 import UploadProgressDrawer from '../../components/features/imports/UploadProgressDrawer';
@@ -18,12 +19,14 @@ import type {
   ImportBatchDuplicateCandidateItem,
   ImportBatchDuplicateGroup,
 } from '../../api/importBatches';
+import type { IdentityAssignmentResponse, ImportBatchFaceCluster } from '../../api/faces';
 
 import styles from './ImportPage.module.css';
 
 const DESKTOP_MEDIA_QUERY = '(min-width: 769px)';
 
 const EMPTY_DUP_GROUPS: ImportBatchDuplicateGroup[] = [];
+const EMPTY_FACE_CLUSTERS: ImportBatchFaceCluster[] = [];
 
 /** Тултип у значка под заголовком блока «Дубликаты в партии». */
 const DUPLICATE_SECTION_HELP_TOOLTIP =
@@ -115,6 +118,26 @@ export default function ImportPage() {
   );
   const duplicateDupFetchFailed = useImportSessionStore((s) =>
     batchId ? (s.duplicateDupFetchFailedByBatch[batchId] ?? false) : false,
+  );
+  const faceClusters = useImportSessionStore((s) =>
+    batchId
+      ? s.faceClustersByBatch[batchId] ?? EMPTY_FACE_CLUSTERS
+      : EMPTY_FACE_CLUSTERS,
+  );
+  const faceClustersLoaded = useImportSessionStore((s) =>
+    batchId ? (s.faceClustersLoadedByBatch[batchId] ?? false) : false,
+  );
+  const faceClustersFetchFailed = useImportSessionStore((s) =>
+    batchId ? (s.faceClustersFetchFailedByBatch[batchId] ?? false) : false,
+  );
+  const updateFaceClusterAssignment = useImportSessionStore(
+    (s) => s.updateFaceClusterAssignment,
+  );
+
+  const faceClustersTotal = faceClusters.length;
+  const faceClustersReviewed = useMemo(
+    () => faceClusters.filter((cluster) => cluster.review_required_count === 0).length,
+    [faceClusters],
   );
 
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
@@ -260,6 +283,18 @@ export default function ImportPage() {
       });
     },
     [batchId],
+  );
+
+  const handleFaceClusterUpdated = useCallback(
+    (updated: IdentityAssignmentResponse) => {
+      if (!batchId) return;
+      updateFaceClusterAssignment(batchId, updated.identity_id, {
+        person_id: updated.person_id,
+        person_name: updated.person_name,
+        review_required_count: updated.review_required_count,
+      });
+    },
+    [batchId, updateFaceClusterAssignment],
   );
 
   return (
@@ -424,6 +459,49 @@ export default function ImportPage() {
                         Пока нет групп «источник — кандидаты»: сканирование могло не
                         найти совпадений или обработка превью ещё не завершилась.
                       </p>
+                    ) : null}
+                  </>
+                )}
+              </section>
+
+              <section
+                className={styles.duplicateSection}
+                aria-labelledby="import-face-clusters-title"
+              >
+                <div className={styles.duplicateSectionHead}>
+                  <h2
+                    id="import-face-clusters-title"
+                    className={styles.duplicateSectionTitle}
+                  >
+                    Кластеры лиц
+                  </h2>
+                </div>
+                {!faceClustersLoaded ? (
+                  <p className={styles.duplicateMuted}>
+                    Подсчёт найденных кластеров лиц…
+                  </p>
+                ) : faceClustersFetchFailed ? (
+                  <p className={styles.duplicateError}>
+                    Не удалось загрузить кластеры лиц. Попробуйте обновить страницу.
+                  </p>
+                ) : (
+                  <>
+                    <p className={styles.duplicateLead}>
+                      Проверено кластеров:{' '}
+                      <strong>{faceClustersReviewed}</strong>
+                      {faceClustersTotal > 0 ? (
+                        <>
+                          {' '}
+                          из <strong>{faceClustersTotal}</strong>
+                        </>
+                      ) : null}
+                    </p>
+                    {batchId ? (
+                      <FaceIdentityClustersSection
+                        batchId={batchId}
+                        clusters={faceClusters}
+                        onClusterUpdated={handleFaceClusterUpdated}
+                      />
                     ) : null}
                   </>
                 )}

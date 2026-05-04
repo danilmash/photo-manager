@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 from wand.image import Image
 
@@ -29,8 +29,9 @@ from app.assets.models import (
 )
 
 
-PHASH_MAX_DISTANCE = 12
-DHASH_MAX_DISTANCE = 14
+# Пороги Хэмминга для 64-битных phash/dhash (burst / слегка разные JPEG часто >12–14).
+PHASH_MAX_DISTANCE = 30
+DHASH_MAX_DISTANCE = 30
 
 
 def compute_original_hashes(
@@ -58,8 +59,14 @@ def compute_original_hashes(
             clone.format = "png"
             blob = clone.make_blob()
         pil_img = PILImage.open(BytesIO(blob)).convert("RGB")
-        phash_hex = str(imagehash.phash(pil_img))
-        dhash_hex = str(imagehash.dhash(pil_img))
+        try:
+            phash_hex = str(imagehash.phash(pil_img))
+        except Exception:
+            pass
+        try:
+            dhash_hex = str(imagehash.dhash(pil_img))
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -123,37 +130,38 @@ class _Match:
     score: float
 
 
+def _hex_hamming_distance(left: str | None, right: str | None) -> int | None:
+    if not left or not right:
+        return None
+    try:
+        return (int(left, 16) ^ int(right, 16)).bit_count()
+    except ValueError:
+        return None
+
+
 def _compare_versions(source: AssetVersion, other: AssetVersion) -> _Match | None:
     if source.sha256 and other.sha256 and source.sha256 == other.sha256:
         return _Match(other.asset_id, DUPLICATE_TYPE_EXACT, 0, 1.0)
 
-    if source.phash and other.phash:
-        try:
-            import imagehash
+    candidates: list[_Match] = []
 
-            h1 = imagehash.hex_to_hash(source.phash)
-            h2 = imagehash.hex_to_hash(other.phash)
-            dist = h1 - h2
-            if dist <= PHASH_MAX_DISTANCE:
-                score = max(0.0, 1.0 - dist / 64.0)
-                return _Match(other.asset_id, DUPLICATE_TYPE_VISUAL, dist, score)
-        except Exception:
-            pass
+    phash_distance = _hex_hamming_distance(source.phash, other.phash)
+    if phash_distance is not None and phash_distance <= PHASH_MAX_DISTANCE:
+        score = max(0.0, 1.0 - phash_distance / 64.0)
+        candidates.append(
+            _Match(other.asset_id, DUPLICATE_TYPE_VISUAL, phash_distance, score),
+        )
 
-    if source.dhash and other.dhash:
-        try:
-            import imagehash
+    dhash_distance = _hex_hamming_distance(source.dhash, other.dhash)
+    if dhash_distance is not None and dhash_distance <= DHASH_MAX_DISTANCE:
+        score = max(0.0, 1.0 - dhash_distance / 64.0)
+        candidates.append(
+            _Match(other.asset_id, DUPLICATE_TYPE_NEAR, dhash_distance, score),
+        )
 
-            h1 = imagehash.hex_to_hash(source.dhash)
-            h2 = imagehash.hex_to_hash(other.dhash)
-            dist = h1 - h2
-            if dist <= DHASH_MAX_DISTANCE:
-                score = max(0.0, 1.0 - dist / 64.0)
-                return _Match(other.asset_id, DUPLICATE_TYPE_NEAR, dist, score)
-        except Exception:
-            pass
-
-    return None
+    if not candidates:
+        return None
+    return max(candidates, key=lambda m: (m.score, -m.distance))
 
 
 def run_duplicate_scan_for_batch(db: Session, batch_id: uuid.UUID) -> None:
@@ -190,27 +198,33 @@ def run_duplicate_scan_for_batch(db: Session, batch_id: uuid.UUID) -> None:
 
     latest_sq = _latest_versions_sq(db, batch_id)
     eligible_versions = (
-        db.query(AssetVersion)
-        .join(
-            Asset,
-            and_(
-                Asset.id == AssetVersion.asset_id,
-                Asset.import_batch_id == batch_id,
-                Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
-            ),
+            db.query(AssetVersion)
+            .join(
+                Asset,
+                and_(
+                    Asset.id == AssetVersion.asset_id,
+                    Asset.import_batch_id == batch_id,
+                    Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+                ),
+            )
+            .join(
+                latest_sq,
+                and_(
+                    AssetVersion.asset_id == latest_sq.c.asset_id,
+                    AssetVersion.version_number == latest_sq.c.max_version_number,
+                ),
+            )
+            .filter(AssetVersion.preview_status == TASK_STATUS_COMPLETED)
+            .filter(
+                or_(
+                    AssetVersion.sha256.isnot(None),
+                    AssetVersion.phash.isnot(None),
+                    AssetVersion.dhash.isnot(None),
+                )
+            )
+            .order_by(Asset.created_at.asc(), Asset.id.asc())
+            .all()
         )
-        .join(
-            latest_sq,
-            and_(
-                AssetVersion.asset_id == latest_sq.c.asset_id,
-                AssetVersion.version_number == latest_sq.c.max_version_number,
-            ),
-        )
-        .filter(AssetVersion.preview_status == TASK_STATUS_COMPLETED)
-        .filter(AssetVersion.sha256.isnot(None))
-        .order_by(Asset.created_at.asc(), Asset.id.asc())
-        .all()
-    )
 
     versions_map = {v.asset_id: v for v in eligible_versions}
     ordered_ids = list(versions_map.keys())
@@ -264,8 +278,8 @@ def run_duplicate_scan_for_batch(db: Session, batch_id: uuid.UUID) -> None:
                         source_asset_id=source_id,
                         candidate_asset_id=m.candidate_id,
                         duplicate_type=m.duplicate_type,
-                        score=m.score,
-                        distance=m.distance,
+                        score=float(m.score),
+                        distance=int(m.distance),
                         rank=rank,
                         review_decision=None,
                         reviewed_at=None,

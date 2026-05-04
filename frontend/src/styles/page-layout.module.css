@@ -64,7 +64,7 @@
 /* Заголовок внутри узкой страницы (горизонтальные отступы уже у .page-narrow) */
 
 .page-intro-narrow {
-  padding: 4px 2px 16px;
+  padding: 4px 2px 8px;
 }
 
 .title {

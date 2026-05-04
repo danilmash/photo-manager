@@ -2,6 +2,14 @@
   transition: padding-left 0.3s ease;
 }
 
+.page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 12px 12px 24px;
+}
+
 @media (min-width: 769px) {
   .main.with-sidebar-open {
     /*
@@ -9,6 +17,73 @@
       сюда, т.к. CSS custom property сайдбара scoped к его .panel.
     */
     padding-left: 280px;
+  }
+
+  .page {
+    max-width: 1600px;
+    padding: 18px 22px 32px;
+  }
+}
+
+.importLayout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gridPane {
+  order: 2;
+  min-width: 0;
+}
+
+.infoPanel {
+  order: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.gridPaneHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.gridTitle {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.gridSubtitle {
+  margin: 4px 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+@media (min-width: 1024px) {
+  .importLayout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+    align-items: start;
+    gap: 20px;
+  }
+
+  .gridPane {
+    order: 1;
+  }
+
+  .infoPane {
+    position: sticky;
+    top: 18px;
+    order: 2;
+    max-height: calc(100vh - 36px);
+    overflow: auto;
+    padding-right: 2px;
   }
 }
 
@@ -82,16 +157,19 @@
   color: var(--color-text-secondary);
 }
 
-.duplicateSection {
-  margin-top: 16px;
+.reviewSection {
   padding: 14px 16px;
   border-radius: 10px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
 }
 
-.duplicateSectionTitle {
-  margin: 0;
+.reviewSectionBody {
+  margin-top: 12px;
+}
+
+.reviewSectionTitle {
+  margin-top: 0;
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-sm);
@@ -99,14 +177,34 @@
   color: var(--color-text-primary);
 }
 
-.duplicateSectionHead {
+.reviewSectionHead {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
 }
 
-.duplicateHelpBtn {
+.sectionToggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.sectionToggle:hover {
+  color: var(--color-accent);
+}
+
+.sectionToggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.reviewHelpBtn {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -123,34 +221,34 @@
     background-color 0.15s ease;
 }
 
-.duplicateHelpBtn:hover {
+.reviewHelpBtn:hover {
   color: var(--color-accent);
   background: var(--color-bg-hover);
 }
 
-.duplicateHelpBtn:focus-visible {
+.reviewHelpBtn:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
-.duplicateLead {
+.reviewLead {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
 
-.duplicateLead strong {
+.reviewLead strong {
   font-weight: var(--font-weight-semibold);
 }
 
-.duplicateMuted {
+.reviewMuted {
   margin: 8px 0 0;
   font-size: var(--font-size-xs);
   line-height: 1.45;
   color: var(--color-text-secondary);
 }
 
-.duplicateError {
+.reviewError {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--color-danger, #c62828);
@@ -185,5 +283,5 @@
 }
 
 .assetsGrid {
-  margin-top: 16px;
+  margin-top: 0;
 }

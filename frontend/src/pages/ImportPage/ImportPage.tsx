@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, CircleAlert, Menu } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Menu } from 'lucide-react';
 
 import type { AssetListItem } from '../../api/assets';
 import BatchAssetsGrid from '../../components/features/imports/BatchAssetsGrid';
@@ -143,6 +143,8 @@ export default function ImportPage() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [isCreating, setIsCreating] = useState<boolean>(false);
   const [isClosing, setIsClosing] = useState<boolean>(false);
+  const [duplicatesCollapsed, setDuplicatesCollapsed] = useState(false);
+  const [faceClustersCollapsed, setFaceClustersCollapsed] = useState(false);
   const [dupClusterViewer, setDupClusterViewer] = useState<{
     photos: AssetListItem[];
     index: number;
@@ -317,7 +319,7 @@ export default function ImportPage() {
           .filter(Boolean)
           .join(' ')}
       >
-        <div className={pageLayout['page-narrow']}>
+        <div className={styles.page}>
           {!isDesktop && (
             <button
               type="button"
@@ -346,168 +348,216 @@ export default function ImportPage() {
 
           {batchId && activeBatch && (
             <>
-              <section
-                className={pageLayout['page-intro-narrow']}
-                aria-labelledby="import-batch-title"
-              >
-                <div className={styles['intro-row']}>
-                  <div className={styles['intro-text']}>
-                    <h1 id="import-batch-title" className={pageLayout.title}>
-                      {formatBatchTitle(activeBatch.created_at)}
-                    </h1>
-                    <p className={pageLayout['subtitle-relaxed']}>
-                      Статус: {STATUS_LABEL[activeBatch.status] ?? activeBatch.status}
-                      {activeBatch.assets_count > 0 && (
-                        <> · {activeBatch.assets_count} фото</>
-                      )}
-                    </p>
+              <div className={styles.importLayout}>
+                <section className={styles.gridPane} aria-label="Фото в партии">
+                  <div className={styles.gridPaneHead}>
+                    <div>
+                      <h2 className={styles.gridTitle}>Фотографии</h2>
+                      <p className={styles.gridSubtitle}>
+                        {activeAssets.length} в текущей партии
+                      </p>
+                    </div>
                   </div>
+                  <BatchAssetsGrid className={styles.assetsGrid} assets={activeAssets} />
+                </section>
+
+                <aside className={styles.infoPanel}>
+                  <section
+                    className={pageLayout['page-intro-narrow']}
+                    aria-labelledby="import-batch-title"
+                  >
+                    <div className={styles['intro-row']}>
+                      <div className={styles['intro-text']}>
+                        <h1 id="import-batch-title" className={pageLayout.title}>
+                          {formatBatchTitle(activeBatch.created_at)}
+                        </h1>
+                        <p className={pageLayout['subtitle-relaxed']}>
+                          Статус: {STATUS_LABEL[activeBatch.status] ?? activeBatch.status}
+                          {activeBatch.assets_count > 0 && (
+                            <> · {activeBatch.assets_count} фото</>
+                          )}
+                        </p>
+                      </div>
+
+                      {activeBatch.status === 'uploading' && (
+                        <button
+                          type="button"
+                          className={styles['close-btn']}
+                          onClick={handleClose}
+                          disabled={!canClose || isClosing}
+                          title={
+                            canClose
+                              ? 'Отправить партию на обработку'
+                              : hasQueuedPreview
+                                ? 'Дождитесь завершения загрузки'
+                                : 'Добавьте хотя бы один файл'
+                          }
+                        >
+                          <CheckCircle2 size={16} />
+                          <span>
+                            {isClosing ? 'Закрываем…' : 'Закрыть партию'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </section>
 
                   {activeBatch.status === 'uploading' && (
-                    <button
-                      type="button"
-                      className={styles['close-btn']}
-                      onClick={handleClose}
-                      disabled={!canClose || isClosing}
-                      title={
-                        canClose
-                          ? 'Отправить партию на обработку'
-                          : hasQueuedPreview
-                            ? 'Дождитесь завершения загрузки'
-                            : 'Добавьте хотя бы один файл'
-                      }
-                    >
-                      <CheckCircle2 size={16} />
-                      <span>
-                        {isClosing ? 'Закрываем…' : 'Закрыть партию'}
-                      </span>
-                    </button>
+                    <DropZone onFiles={handleFiles} />
                   )}
-                </div>
-              </section>
 
-              {activeBatch.status === 'uploading' && (
-                <DropZone onFiles={handleFiles} />
-              )}
+                  {activeBatch.status === 'processing' && (
+                    <div className={styles.banner}>
+                      Идёт ML-обработка фото. Это может занять несколько минут.
+                    </div>
+                  )}
 
-              {activeBatch.status === 'processing' && (
-                <div className={styles.banner}>
-                  Идёт ML-обработка фото. Это может занять несколько минут.
-                </div>
-              )}
+                  {activeBatch.status === 'pending_review' && (
+                    <div className={styles.banner}>
+                      Обработка завершена. Партия готова к ревью.
+                    </div>
+                  )}
 
-              {activeBatch.status === 'pending_review' && (
-                <div className={styles.banner}>
-                  Обработка завершена. Партия готова к ревью.
-                </div>
-              )}
+                  {(activeBatch.status === 'rejected' ||
+                    activeBatch.status === 'cancelled') && (
+                    <div className={`${styles.banner} ${styles['banner-muted']}`}>
+                      Партия {STATUS_LABEL[activeBatch.status]?.toLowerCase()}.
+                    </div>
+                  )}
 
-              {(activeBatch.status === 'rejected' ||
-                activeBatch.status === 'cancelled') && (
-                <div className={`${styles.banner} ${styles['banner-muted']}`}>
-                  Партия {STATUS_LABEL[activeBatch.status]?.toLowerCase()}.
-                </div>
-              )}
-
-              <section
-                className={styles.duplicateSection}
-                aria-labelledby="import-dup-summary-title"
-              >
-                <div className={styles.duplicateSectionHead}>
-                  <h2
-                    id="import-dup-summary-title"
-                    className={styles.duplicateSectionTitle}
+                  <section
+                    className={styles.reviewSection}
+                    aria-labelledby="import-dup-summary-title"
                   >
-                    Дубликаты в партии
-                  </h2>
-                  <button
-                    type="button"
-                    className={styles.duplicateHelpBtn}
-                    title={DUPLICATE_SECTION_HELP_TOOLTIP}
-                    aria-label="Подробнее: как считаются дубликаты и как вынести вердикт"
-                  >
-                    <CircleAlert size={18} strokeWidth={2} aria-hidden />
-                  </button>
-                </div>
-                {!duplicatesLoaded ? (
-                  <p className={styles.duplicateMuted}>
-                    Подсчёт потенциальных дубликатов…
-                  </p>
-                ) : duplicateDupFetchFailed ? (
-                  <p className={styles.duplicateError}>
-                    Не удалось загрузить данные о дубликатах. Попробуйте
-                    обновить страницу.
-                  </p>
-                ) : (
-                  <>
-                    <p className={styles.duplicateLead}>
-                      Проверено дубликатов:{' '}
-                      <strong>{duplicateReviewedCount}</strong>
-                      {duplicateCandidatesTotal > 0 ? (
-                        <>
-                          {' '}
-                          из <strong>{duplicateCandidatesTotal}</strong>
-                        </>
-                      ) : null}
-                    </p>
-                    <DuplicateSourcesSection
-                      groups={duplicateGroups}
-                      onOpenDuplicateCluster={handleOpenDuplicateCluster}
-                    />
-                    {duplicateGroups.length === 0 ? (
-                      <p className={styles.duplicateMuted}>
-                        Пока нет групп «источник — кандидаты»: сканирование могло не
-                        найти совпадений или обработка превью ещё не завершилась.
-                      </p>
+                    <div className={styles.reviewSectionHead}>
+                      <button
+                        type="button"
+                        className={styles.sectionToggle}
+                        onClick={() => setDuplicatesCollapsed((v) => !v)}
+                        aria-expanded={!duplicatesCollapsed}
+                        aria-controls="import-dup-section-body"
+                      >
+                        {duplicatesCollapsed ? (
+                          <ChevronRight size={18} aria-hidden />
+                        ) : (
+                          <ChevronDown size={18} aria-hidden />
+                        )}
+                        <h2
+                          id="import-dup-summary-title"
+                          className={styles.reviewSectionTitle}
+                        >
+                          Дубликаты в партии
+                        </h2>
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.reviewHelpBtn}
+                        title={DUPLICATE_SECTION_HELP_TOOLTIP}
+                        aria-label="Подробнее: как считаются дубликаты и как вынести вердикт"
+                      >
+                        <CircleAlert size={18} strokeWidth={2} aria-hidden />
+                      </button>
+                    </div>
+                    {!duplicatesCollapsed ? (
+                      <div className={styles.reviewSectionBody} id="import-dup-section-body">
+                        {!duplicatesLoaded ? (
+                          <p className={styles.reviewMuted}>
+                            Подсчёт потенциальных дубликатов…
+                          </p>
+                        ) : duplicateDupFetchFailed ? (
+                          <p className={styles.reviewError}>
+                            Не удалось загрузить данные о дубликатах. Попробуйте
+                            обновить страницу.
+                          </p>
+                        ) : (
+                          <>
+                            <p className={styles.reviewLead}>
+                              Проверено дубликатов:{' '}
+                              <strong>{duplicateReviewedCount}</strong>
+                              {duplicateCandidatesTotal > 0 ? (
+                                <>
+                                  {' '}
+                                  из <strong>{duplicateCandidatesTotal}</strong>
+                                </>
+                              ) : null}
+                            </p>
+                            <DuplicateSourcesSection
+                              groups={duplicateGroups}
+                              onOpenDuplicateCluster={handleOpenDuplicateCluster}
+                            />
+                            {duplicateGroups.length === 0 ? (
+                              <p className={styles.reviewMuted}>
+                                Пока нет групп «источник — кандидаты»: сканирование могло не
+                                найти совпадений или обработка превью ещё не завершилась.
+                              </p>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
                     ) : null}
-                  </>
-                )}
-              </section>
+                  </section>
 
-              <section
-                className={styles.duplicateSection}
-                aria-labelledby="import-face-clusters-title"
-              >
-                <div className={styles.duplicateSectionHead}>
-                  <h2
-                    id="import-face-clusters-title"
-                    className={styles.duplicateSectionTitle}
+                  <section
+                    className={styles.reviewSection}
+                    aria-labelledby="import-face-clusters-title"
                   >
-                    Кластеры лиц
-                  </h2>
-                </div>
-                {!faceClustersLoaded ? (
-                  <p className={styles.duplicateMuted}>
-                    Подсчёт найденных кластеров лиц…
-                  </p>
-                ) : faceClustersFetchFailed ? (
-                  <p className={styles.duplicateError}>
-                    Не удалось загрузить кластеры лиц. Попробуйте обновить страницу.
-                  </p>
-                ) : (
-                  <>
-                    <p className={styles.duplicateLead}>
-                      Проверено кластеров:{' '}
-                      <strong>{faceClustersReviewed}</strong>
-                      {faceClustersTotal > 0 ? (
-                        <>
-                          {' '}
-                          из <strong>{faceClustersTotal}</strong>
-                        </>
-                      ) : null}
-                    </p>
-                    {batchId ? (
-                      <FaceIdentityClustersSection
-                        batchId={batchId}
-                        clusters={faceClusters}
-                        onClusterUpdated={handleFaceClusterUpdated}
-                      />
+                    <div className={styles.reviewSectionHead}>
+                      <button
+                        type="button"
+                        className={styles.sectionToggle}
+                        onClick={() => setFaceClustersCollapsed((v) => !v)}
+                        aria-expanded={!faceClustersCollapsed}
+                        aria-controls="import-face-clusters-body"
+                      >
+                        {faceClustersCollapsed ? (
+                          <ChevronRight size={18} aria-hidden />
+                        ) : (
+                          <ChevronDown size={18} aria-hidden />
+                        )}
+                        <h2
+                          id="import-face-clusters-title"
+                          className={styles.reviewSectionTitle}
+                        >
+                          Кластеры лиц
+                        </h2>
+                      </button>
+                    </div>
+                    {!faceClustersCollapsed ? (
+                      <div className={styles.reviewSectionBody} id="import-face-clusters-body">
+                        {!faceClustersLoaded ? (
+                          <p className={styles.reviewMuted}>
+                            Подсчёт найденных кластеров лиц…
+                          </p>
+                        ) : faceClustersFetchFailed ? (
+                          <p className={styles.reviewError}>
+                            Не удалось загрузить кластеры лиц. Попробуйте обновить страницу.
+                          </p>
+                        ) : (
+                          <>
+                            <p className={styles.reviewLead}>
+                              Проверено кластеров:{' '}
+                              <strong>{faceClustersReviewed}</strong>
+                              {faceClustersTotal > 0 ? (
+                                <>
+                                  {' '}
+                                  из <strong>{faceClustersTotal}</strong>
+                                </>
+                              ) : null}
+                            </p>
+                            {batchId ? (
+                              <FaceIdentityClustersSection
+                                batchId={batchId}
+                                clusters={faceClusters}
+                                onClusterUpdated={handleFaceClusterUpdated}
+                              />
+                            ) : null}
+                          </>
+                        )}
+                      </div>
                     ) : null}
-                  </>
-                )}
-              </section>
-
-              <BatchAssetsGrid className={styles.assetsGrid} assets={activeAssets} />
+                  </section>
+                </aside>
+              </div>
             </>
           )}
         </div>

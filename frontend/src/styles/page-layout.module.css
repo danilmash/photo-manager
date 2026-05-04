@@ -102,7 +102,10 @@
   font-weight: 600;
   letter-spacing: var(--letter-spacing-wide);
   color: var(--color-text-secondary);
-  margin-bottom: 10px;
+}
+
+.section-heading + * {
+  margin-top: 10px;
 }
 
 /* --- Сообщения об ошибках --- */

@@ -74,20 +74,22 @@ export default function HomePage() {
           </Button>
         </div>
       </section>
+      <section className={pageLayout.section}>
+        <SemanticSearchInput
+          className={styles.search}
+          activeQuery={searchQuery}
+          isLoading={isLoading}
+          onSearch={search}
+          onClear={clearSearch}
+        />
 
-      <SemanticSearchInput
-        className={styles.search}
-        activeQuery={searchQuery}
-        isLoading={isLoading}
-        onSearch={search}
-        onClear={clearSearch}
-      />
-
-      {searchQuery ? (
-        <div className={styles['search-summary']}>
-          Результаты умного поиска: <strong>{searchQuery}</strong>
-        </div>
-      ) : null}
+        {searchQuery ? (
+          <div className={styles['search-summary']}>
+            Результаты умного поиска: <strong>{searchQuery}</strong>
+          </div>
+        ) : null}
+      </section>
+      
 
       <PersonsStrip />
 

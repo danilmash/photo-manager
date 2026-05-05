@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Search, X } from 'lucide-react';
 
-import Button from '../Button';
 import styles from './SemanticSearchInput.module.css';
 
 interface SemanticSearchInputProps {
@@ -35,7 +34,6 @@ export default function SemanticSearchInput({
         void onSearch(draft);
       }}
     >
-      <Search className={styles.icon} aria-hidden />
       <input
         className={styles.input}
         value={draft}
@@ -56,9 +54,14 @@ export default function SemanticSearchInput({
           <X size={16} aria-hidden />
         </button>
       ) : null}
-      <Button color="primary" variant="filled" size="m" disabled={isLoading}>
-        Найти
-      </Button>
+      <button
+        type="submit"
+        className={styles.searchButton}
+        disabled={isLoading}
+        aria-label="Найти"
+      >
+        <Search size={18} aria-hidden />
+      </button>
     </form>
   );
 }

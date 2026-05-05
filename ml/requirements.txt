@@ -4,3 +4,5 @@ deepface
 tf-keras
 numpy
 pillow
+open_clip_torch
+transformers

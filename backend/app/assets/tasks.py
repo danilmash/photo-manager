@@ -6,7 +6,7 @@ from sqlalchemy import and_, func
 from wand.color import Color
 from wand.image import Image
 
-from app.assets.ml_service import detect_faces
+from app.assets.ml_service import detect_faces, embed_image
 from app.assets.duplicate_detection import (
     batch_previews_all_terminal,
     compute_original_hashes,
@@ -578,6 +578,15 @@ def process_asset_ml(version_id: str):
         db.commit()
 
         try:
+            try:
+                version.semantic_embedding = embed_image(str(preview_path))
+                db.commit()
+            except Exception:
+                db.rollback()
+                version = db.query(AssetVersion).filter_by(id=version_uuid).first()
+                if not version:
+                    return
+
             db.query(FaceDetection).filter_by(asset_version_id=version.id).delete()
             db.flush()
 

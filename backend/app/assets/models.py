@@ -12,6 +12,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
 
 from app.database import Base
 import uuid
@@ -203,6 +204,7 @@ class AssetVersion(Base):
     sha256 = Column(String(64), nullable=True, index=True)
     phash = Column(String(32), nullable=True, index=True)
     dhash = Column(String(32), nullable=True, index=True)
+    semantic_embedding = Column(Vector(512), nullable=True)
 
     asset = relationship("Asset", back_populates="versions")
     base_version = relationship(

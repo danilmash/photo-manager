@@ -5,6 +5,17 @@
   padding: 0;
 }
 
+.search {
+  margin-top: 14px;
+}
+
+.search-summary,
+.empty {
+  margin-top: 10px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
 .tile-btn {
   all: unset;
   display: block;

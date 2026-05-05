@@ -23,6 +23,23 @@ class DetectResponse(BaseModel):
     faces: list[FaceResult]
 
 
+class EmbedImageRequest(BaseModel):
+    image_b64: str
+
+
+class EmbedTextRequest(BaseModel):
+    text: str
+
+
+class EmbeddingResponse(BaseModel):
+    embedding: list[float]
+
+
+_clip_model = None
+_clip_preprocess = None
+_clip_tokenizer = None
+
+
 def load_model():
     from deepface import DeepFace
 
@@ -36,6 +53,27 @@ def load_model():
         )
     except Exception:
         pass
+
+
+def load_clip_model():
+    global _clip_model, _clip_preprocess, _clip_tokenizer
+    if _clip_model is not None:
+        return _clip_model, _clip_preprocess, _clip_tokenizer
+
+    import open_clip
+    import torch
+
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        "xlm-roberta-base-ViT-B-32",
+        pretrained="laion5b_s13b_b90k",
+    )
+    model.eval()
+    model.to("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = open_clip.get_tokenizer("xlm-roberta-base-ViT-B-32")
+    _clip_model = model
+    _clip_preprocess = preprocess
+    _clip_tokenizer = tokenizer
+    return model, preprocess, tokenizer
 
 
 @asynccontextmanager
@@ -139,6 +177,53 @@ def detect_faces(body: DetectRequest):
         ))
 
     return DetectResponse(faces=faces)
+
+
+def _normalized_vector_to_list(vec) -> list[float]:
+    norm = np.linalg.norm(vec)
+    if norm > 0:
+        vec = vec / norm
+    return [float(x) for x in vec.tolist()]
+
+
+@app.post("/embed-image", response_model=EmbeddingResponse)
+def embed_image(body: EmbedImageRequest):
+    import torch
+
+    try:
+        image_bytes = base64.b64decode(body.image_b64)
+        img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Невалидное изображение")
+
+    try:
+        model, preprocess, _ = load_clip_model()
+        device = next(model.parameters()).device
+        image = preprocess(img).unsqueeze(0).to(device)
+        with torch.no_grad():
+            embedding = model.encode_image(image)[0].detach().cpu().numpy()
+        return EmbeddingResponse(embedding=_normalized_vector_to_list(embedding))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/embed-text", response_model=EmbeddingResponse)
+def embed_text(body: EmbedTextRequest):
+    import torch
+
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Пустой поисковый запрос")
+
+    try:
+        model, _, tokenizer = load_clip_model()
+        device = next(model.parameters()).device
+        tokens = tokenizer([text]).to(device)
+        with torch.no_grad():
+            embedding = model.encode_text(tokens)[0].detach().cpu().numpy()
+        return EmbeddingResponse(embedding=_normalized_vector_to_list(embedding))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")

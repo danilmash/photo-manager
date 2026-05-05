@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.assets.models import (
@@ -40,6 +40,7 @@ from app.assets.schemas import (
     AssetViewerResponseSchema,
     UploadResponseSchema,
 )
+from app.assets.ml_service import embed_text
 from app.assets.tasks import process_asset_ml, process_asset_preview
 from app.config import settings
 from app.database import get_db
@@ -535,6 +536,85 @@ def list_assets(
         next_cursor = _encode_cursor(last_row.created_at, last_row.id)
 
     return AssetListResponseSchema(items=items, next_cursor=next_cursor)
+
+
+@router.get("/search/semantic", response_model=AssetListResponseSchema)
+def search_assets_semantic(
+    q: str = Query(..., min_length=1),
+    limit: int = 50,
+    max_distance: float = Query(default=0.85, ge=0.0, le=2.0),
+    lifecycle: Literal["active", "trashed", "all"] = Query(default="active"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = q.strip()
+    if not query:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пустой поисковый запрос",
+        )
+
+    limit = max(1, min(limit, 100))
+    try:
+        query_embedding = embed_text(query)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    latest_sq = (
+        db.query(
+            AssetVersion.asset_id.label("asset_id"),
+            func.max(AssetVersion.version_number).label("max_version_number"),
+        )
+        .join(Asset, AssetVersion.asset_id == Asset.id)
+        .filter(Asset.owner_id == current_user.id)
+        .group_by(AssetVersion.asset_id)
+        .subquery()
+    )
+    distance = AssetVersion.semantic_embedding.cosine_distance(query_embedding)
+    print(distance)
+    rows = (
+        db.query(Asset, AssetVersion)
+        .join(AssetVersion, AssetVersion.asset_id == Asset.id)
+        .join(
+            latest_sq,
+            and_(
+                AssetVersion.asset_id == latest_sq.c.asset_id,
+                AssetVersion.version_number == latest_sq.c.max_version_number,
+            ),
+        )
+        .filter(Asset.owner_id == current_user.id)
+        .filter(AssetVersion.semantic_embedding.isnot(None))
+        .filter(distance <= max_distance)
+    )
+    if lifecycle == "active":
+        rows = rows.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
+    elif lifecycle == "trashed":
+        rows = rows.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_TRASHED)
+
+    rows = rows.order_by(distance.asc(), Asset.created_at.desc()).limit(limit).all()
+    versions = [version for _, version in rows]
+    version_files = _get_version_files_map(db, [version.id for version in versions])
+
+    items = [
+        AssetListItemSchema(
+            asset_id=asset.id,
+            title=asset.title,
+            created_at=asset.created_at,
+            updated_at=asset.updated_at,
+            lifecycle_status=asset.lifecycle_status,
+            trashed_at=asset.trashed_at,
+            version=_build_version_summary(
+                version,
+                version_files.get(version.id, {}),
+            ),
+        )
+        for asset, version in rows
+    ]
+
+    return AssetListResponseSchema(items=items, next_cursor=None)
 
 
 @router.get("/files/{file_id}")

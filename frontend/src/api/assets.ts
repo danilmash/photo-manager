@@ -92,6 +92,21 @@ export async function listAssets(params?: {
   return data;
 }
 
+export async function searchAssetsSemantic(params: {
+  query: string;
+  limit?: number;
+  maxDistance?: number;
+}): Promise<AssetListResponse> {
+  const { data } = await api.get<AssetListResponse>('/assets/search/semantic', {
+    params: {
+      q: params.query,
+      limit: params.limit,
+      max_distance: params.maxDistance,
+    },
+  });
+  return data;
+}
+
 export async function uploadAsset(
   file: File,
   onUploadProgress?: (event: AxiosProgressEvent) => void,

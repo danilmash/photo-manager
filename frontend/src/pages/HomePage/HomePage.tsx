@@ -11,6 +11,7 @@ import { Upload } from 'lucide-react';
 import Modal from '../../components/ui/Modal';
 import PhotoViewer from '../../components/ui/PhotoViewer';
 import PersonsStrip from '../../components/ui/PersonsStrip';
+import SemanticSearchInput from '../../components/ui/SemanticSearchInput';
 
 /** Миниатюра уже есть после фазы preview; общий status может быть processing (ML). */
 function canShowLibraryThumb(item: AssetListItem): boolean {
@@ -19,7 +20,16 @@ function canShowLibraryThumb(item: AssetListItem): boolean {
 }
 
 export default function HomePage() {
-  const { items, isLoading, error, loadInitial, loadMore } = useAssetsFeedStore();
+  const {
+    items,
+    isLoading,
+    error,
+    searchQuery,
+    loadInitial,
+    loadMore,
+    search,
+    clearSearch,
+  } = useAssetsFeedStore();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<AssetListItem | null>(null);
 
@@ -64,6 +74,20 @@ export default function HomePage() {
           </Button>
         </div>
       </section>
+
+      <SemanticSearchInput
+        className={styles.search}
+        activeQuery={searchQuery}
+        isLoading={isLoading}
+        onSearch={search}
+        onClear={clearSearch}
+      />
+
+      {searchQuery ? (
+        <div className={styles['search-summary']}>
+          Результаты умного поиска: <strong>{searchQuery}</strong>
+        </div>
+      ) : null}
 
       <PersonsStrip />
 
@@ -129,6 +153,10 @@ export default function HomePage() {
           })}
         </div>
       )}
+
+      {!hasItems && !showInitialLoading && searchQuery && !error ? (
+        <div className={styles.empty}>По запросу ничего не найдено.</div>
+      ) : null}
 
       <Modal dark={true} variant='fullscreen' isOpen={!!selectedAsset} onClose={() => setSelectedAsset(null)}>
         <PhotoViewer

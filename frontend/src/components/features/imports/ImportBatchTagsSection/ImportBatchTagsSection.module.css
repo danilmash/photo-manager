@@ -80,33 +80,6 @@
   gap: 6px;
 }
 
-.selectedChip,
-.suggestionChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  cursor: pointer;
-}
-
-.selectedChip {
-  padding: 5px 9px;
-  font-size: var(--font-size-xs);
-}
-
-.selectedChip span {
-  color: var(--color-text-secondary);
-}
-
-.selectedChip:hover,
-.suggestionChip:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
 .suggestions {
   display: grid;
   gap: 10px;
@@ -127,19 +100,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.suggestionChip {
-  padding: 5px 8px;
-  font-size: var(--font-size-xs);
-}
-
-.count {
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
-  font-size: 11px;
 }
 
 .muted,

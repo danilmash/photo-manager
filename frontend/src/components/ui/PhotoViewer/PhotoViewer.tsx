@@ -30,6 +30,7 @@ import {
 } from '../../../api/assets';
 import { DEFAULT_PHOTO_RECIPE, normalizeRecipe, type PhotoRecipe } from '../../../api/recipe';
 import Button from '../Button';
+import Chip from '../Chip';
 import Drawer, { DRAWER_MOVE_PADDING_PX } from '../Drawer';
 import PhotoCarousel from '../PhotoCarousel';
 import PhotoFacesPanel from '../PhotoFacesPanel';
@@ -119,10 +120,10 @@ function normalizeTag(value: string): string | null {
   return tag.length > 64 ? tag.slice(0, 64).trim() : tag;
 }
 
-function normalizeTags(value: string): string[] {
+function normalizeTagsFromValues(values: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const item of value.split(',')) {
+  for (const item of values) {
     const tag = normalizeTag(item);
     if (!tag) continue;
     const key = tag.toLocaleLowerCase('ru-RU');
@@ -343,9 +344,9 @@ export default function PhotoViewer({
   }, [editDrawerOpen, currentViewer?.version?.id]);
 
   useEffect(() => {
-    setTagDraft(currentViewer?.photo.keywords.join(', ') ?? '');
+    setTagDraft('');
     setTagError(null);
-  }, [currentViewer?.version?.id, currentViewer?.photo.keywords]);
+  }, [currentViewer?.version?.id]);
 
   const handleApplyEdit = useCallback(async () => {
     const aid = currentPhoto?.asset_id;
@@ -366,9 +367,8 @@ export default function PhotoViewer({
     }
   }, [currentPhoto?.asset_id, currentViewer?.version?.id, draftRecipe, loadAssetViewer]);
 
-  const handleSaveTags = useCallback(
-    async (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
+  const saveTags = useCallback(
+    async (tags: string[]) => {
       const aid = currentPhoto?.asset_id;
       const vid = currentViewer?.version?.id;
       if (!aid || !vid || tagSaving) return;
@@ -376,8 +376,8 @@ export default function PhotoViewer({
       setTagSaving(true);
       setTagError(null);
       try {
-        const response = await updateAssetVersionTags(aid, vid, normalizeTags(tagDraft));
-        setTagDraft(response.keywords.join(', '));
+        const response = await updateAssetVersionTags(aid, vid, tags);
+        setTagDraft('');
         setViewerById((prev) => {
           const viewer = prev[aid];
           if (!viewer) return prev;
@@ -403,7 +403,31 @@ export default function PhotoViewer({
         setTagSaving(false);
       }
     },
-    [currentPhoto?.asset_id, currentViewer?.version?.id, tagDraft, tagSaving],
+    [currentPhoto?.asset_id, currentViewer?.version?.id, tagSaving],
+  );
+
+  const handleAddTag = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const currentTags = currentViewer?.photo.keywords ?? [];
+      const nextTags = normalizeTagsFromValues([...currentTags, tagDraft]);
+      if (nextTags.length === currentTags.length || tagSaving) return;
+      await saveTags(nextTags);
+    },
+    [currentViewer?.photo.keywords, saveTags, tagDraft, tagSaving],
+  );
+
+  const handleRemoveTag = useCallback(
+    async (tag: string) => {
+      const currentTags = currentViewer?.photo.keywords ?? [];
+      const key = tag.toLocaleLowerCase('ru-RU');
+      const nextTags = currentTags.filter(
+        (item) => item.toLocaleLowerCase('ru-RU') !== key,
+      );
+      if (nextTags.length === currentTags.length || tagSaving) return;
+      await saveTags(nextTags);
+    },
+    [currentViewer?.photo.keywords, saveTags, tagSaving],
   );
 
   useEffect(() => {
@@ -667,7 +691,7 @@ export default function PhotoViewer({
                     <strong>Рейтинг:</strong> {renderValue(currentViewer.photo.rating)}
                   </div>
                   <form
-                    onSubmit={handleSaveTags}
+                    onSubmit={handleAddTag}
                     style={{ display: 'grid', gap: 8 }}
                   >
                     <label
@@ -676,49 +700,60 @@ export default function PhotoViewer({
                     >
                       Ключевые слова
                     </label>
-                    <textarea
-                      id="photo-version-tags"
-                      value={tagDraft}
-                      onChange={(event) => setTagDraft(event.target.value)}
-                      placeholder="портрет, студия, собака"
-                      rows={3}
-                      disabled={!currentViewer.version || tagSaving}
-                      style={{
-                        width: '100%',
-                        boxSizing: 'border-box',
-                        resize: 'vertical',
-                        borderRadius: 8,
-                        border: '1px solid var(--color-border)',
-                        background: 'var(--color-bg-primary)',
-                        color: 'var(--color-text-primary)',
-                        padding: '8px 10px',
-                        font: 'inherit',
-                      }}
-                    />
                     <div
                       style={{
                         display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
                         gap: 8,
                       }}
                     >
-                      <span
+                      <input
+                        id="photo-version-tags"
+                        value={tagDraft}
+                        onChange={(event) => setTagDraft(event.target.value)}
+                        placeholder="Новый тег"
+                        disabled={!currentViewer.version || tagSaving}
                         style={{
-                          color: 'var(--color-text-secondary)',
-                          fontSize: 'var(--font-size-xs)',
+                          minWidth: 0,
+                          flex: 1,
+                          boxSizing: 'border-box',
+                          borderRadius: 8,
+                          border: '1px solid var(--color-border)',
+                          background: 'var(--color-bg-primary)',
+                          color: 'var(--color-text-primary)',
+                          padding: '8px 10px',
+                          font: 'inherit',
                         }}
-                      >
-                        Через запятую, до 30 тегов.
-                      </span>
+                      />
                       <Button
                         color="primary"
                         size="sm"
-                        disabled={!currentViewer.version || tagSaving}
+                        disabled={!currentViewer.version || tagSaving || !tagDraft.trim()}
                       >
-                        {tagSaving ? 'Сохраняем…' : 'Сохранить'}
+                        {tagSaving ? '...' : 'Добавить'}
                       </Button>
                     </div>
+                    {currentViewer.photo.keywords.length > 0 ? (
+                      <div
+                        aria-label="Теги текущей версии"
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 6,
+                        }}
+                      >
+                        {currentViewer.photo.keywords.map((tag) => (
+                          <Chip
+                            key={tag}
+                            onRemove={() => {
+                              void handleRemoveTag(tag);
+                            }}
+                            title="Удалить тег"
+                          >
+                            {tag}
+                          </Chip>
+                        ))}
+                      </div>
+                    ) : null}
                     {tagError ? (
                       <div style={{ color: 'var(--color-danger, #c62828)' }}>
                         {tagError}

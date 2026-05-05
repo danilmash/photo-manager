@@ -4,6 +4,7 @@ import type {
   ImportBatchTagSuggestionItem,
   ImportBatchTagSuggestionsResponse,
 } from '../../../../api/importBatches';
+import Chip from '../../../ui/Chip';
 
 import styles from './ImportBatchTagsSection.module.css';
 
@@ -64,15 +65,13 @@ function SuggestionGroup({
       <div className={styles.suggestionTitle}>{title}</div>
       <div className={styles.suggestionList}>
         {items.map((item) => (
-          <button
+          <Chip
             key={`${title}-${item.tag}`}
-            type="button"
-            className={styles.suggestionChip}
             onClick={() => onPick(item.tag)}
+            count={item.count}
           >
-            <span>{item.tag}</span>
-            <span className={styles.count}>{item.count}</span>
-          </button>
+            {item.tag}
+          </Chip>
         ))}
       </div>
     </div>
@@ -179,16 +178,13 @@ export default function ImportBatchTagsSection({
         {selectedTags.length > 0 ? (
           <div className={styles.selectedList} aria-label="Выбранные теги">
             {selectedTags.map((tag) => (
-              <button
+              <Chip
                 key={tag}
-                type="button"
-                className={styles.selectedChip}
-                onClick={() => removeTag(tag)}
+                onRemove={() => removeTag(tag)}
                 title="Убрать тег"
               >
                 {tag}
-                <span aria-hidden>×</span>
-              </button>
+              </Chip>
             ))}
           </div>
         ) : null}

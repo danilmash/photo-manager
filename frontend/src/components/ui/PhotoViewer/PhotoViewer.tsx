@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft,
@@ -17,6 +24,7 @@ import type {
 import {
   createAssetVersion,
   getAssetViewer,
+  updateAssetVersionTags,
   type AssetListItem,
   type AssetViewer,
 } from '../../../api/assets';
@@ -105,6 +113,27 @@ function parseBbox(
   return { x, y, width, height };
 }
 
+function normalizeTag(value: string): string | null {
+  const tag = value.trim().replace(/\s+/g, ' ');
+  if (!tag) return null;
+  return tag.length > 64 ? tag.slice(0, 64).trim() : tag;
+}
+
+function normalizeTags(value: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value.split(',')) {
+    const tag = normalizeTag(item);
+    if (!tag) continue;
+    const key = tag.toLocaleLowerCase('ru-RU');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+
 export default function PhotoViewer({
   photos,
   currentIndex,
@@ -129,6 +158,9 @@ export default function PhotoViewer({
   const [viewerErrorById, setViewerErrorById] = useState<
     Record<string, string | null>
   >({});
+  const [tagDraft, setTagDraft] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
   const [imageMetrics, setImageMetrics] = useState<ImageMetrics | null>(null);
   const [imageSettled, setImageSettled] = useState(false);
   const [activeFaceId, setActiveFaceId] = useState<string | null>(null);
@@ -310,6 +342,11 @@ export default function PhotoViewer({
     setDraftRecipe(normalized);
   }, [editDrawerOpen, currentViewer?.version?.id]);
 
+  useEffect(() => {
+    setTagDraft(currentViewer?.photo.keywords.join(', ') ?? '');
+    setTagError(null);
+  }, [currentViewer?.version?.id, currentViewer?.photo.keywords]);
+
   const handleApplyEdit = useCallback(async () => {
     const aid = currentPhoto?.asset_id;
     const vid = currentViewer?.version?.id;
@@ -328,6 +365,46 @@ export default function PhotoViewer({
       setApplyingVersion(false);
     }
   }, [currentPhoto?.asset_id, currentViewer?.version?.id, draftRecipe, loadAssetViewer]);
+
+  const handleSaveTags = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const aid = currentPhoto?.asset_id;
+      const vid = currentViewer?.version?.id;
+      if (!aid || !vid || tagSaving) return;
+
+      setTagSaving(true);
+      setTagError(null);
+      try {
+        const response = await updateAssetVersionTags(aid, vid, normalizeTags(tagDraft));
+        setTagDraft(response.keywords.join(', '));
+        setViewerById((prev) => {
+          const viewer = prev[aid];
+          if (!viewer) return prev;
+          const next = {
+            ...prev,
+            [aid]: {
+              ...viewer,
+              version: viewer.version
+                ? { ...viewer.version, keywords: response.keywords }
+                : viewer.version,
+              photo: {
+                ...viewer.photo,
+                keywords: response.keywords,
+              },
+            },
+          };
+          viewerByIdRef.current = next;
+          return next;
+        });
+      } catch {
+        setTagError('Не удалось сохранить теги версии');
+      } finally {
+        setTagSaving(false);
+      }
+    },
+    [currentPhoto?.asset_id, currentViewer?.version?.id, tagDraft, tagSaving],
+  );
 
   useEffect(() => {
     setImageSettled(false);
@@ -589,12 +666,65 @@ export default function PhotoViewer({
                   <div>
                     <strong>Рейтинг:</strong> {renderValue(currentViewer.photo.rating)}
                   </div>
-                  <div>
-                    <strong>Ключевые слова:</strong>{' '}
-                    {currentViewer.photo.keywords.length > 0
-                      ? currentViewer.photo.keywords.join(', ')
-                      : '—'}
-                  </div>
+                  <form
+                    onSubmit={handleSaveTags}
+                    style={{ display: 'grid', gap: 8 }}
+                  >
+                    <label
+                      htmlFor="photo-version-tags"
+                      style={{ fontWeight: 700 }}
+                    >
+                      Ключевые слова
+                    </label>
+                    <textarea
+                      id="photo-version-tags"
+                      value={tagDraft}
+                      onChange={(event) => setTagDraft(event.target.value)}
+                      placeholder="портрет, студия, собака"
+                      rows={3}
+                      disabled={!currentViewer.version || tagSaving}
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        resize: 'vertical',
+                        borderRadius: 8,
+                        border: '1px solid var(--color-border)',
+                        background: 'var(--color-bg-primary)',
+                        color: 'var(--color-text-primary)',
+                        padding: '8px 10px',
+                        font: 'inherit',
+                      }}
+                    />
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: 'var(--color-text-secondary)',
+                          fontSize: 'var(--font-size-xs)',
+                        }}
+                      >
+                        Через запятую, до 30 тегов.
+                      </span>
+                      <Button
+                        color="primary"
+                        size="sm"
+                        disabled={!currentViewer.version || tagSaving}
+                      >
+                        {tagSaving ? 'Сохраняем…' : 'Сохранить'}
+                      </Button>
+                    </div>
+                    {tagError ? (
+                      <div style={{ color: 'var(--color-danger, #c62828)' }}>
+                        {tagError}
+                      </div>
+                    ) : null}
+                  </form>
                 </section>
 
                 <section style={{ display: 'grid', gap: 10 }}>

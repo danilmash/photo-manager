@@ -28,6 +28,7 @@ export interface AssetVersionSummary {
   preview_error: string | null;
   faces_error: string | null;
   recipe: Record<string, unknown>;
+  keywords: string[];
   rendered_width: number | null;
   rendered_height: number | null;
   is_identity_source: boolean;
@@ -217,6 +218,25 @@ export async function createAssetVersion(
     recipe: body.recipe,
     base_version_id: body.base_version_id ?? undefined,
   });
+  return data;
+}
+
+export interface AssetVersionTagsResponse {
+  asset_id: string;
+  version_id: string;
+  version_number: number;
+  keywords: string[];
+}
+
+export async function updateAssetVersionTags(
+  assetId: string,
+  versionId: string,
+  tags: string[],
+): Promise<AssetVersionTagsResponse> {
+  const { data } = await api.put<AssetVersionTagsResponse>(
+    `/assets/${assetId}/versions/${versionId}/tags`,
+    { tags },
+  );
   return data;
 }
 

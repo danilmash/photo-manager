@@ -47,6 +47,12 @@ class AssetVersionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AssetVersionTagsUpdateRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list, max_length=30)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AssetVersionStatusSchema(BaseModel):
     asset_id: UUID
     version_id: UUID
@@ -66,6 +72,13 @@ class UploadResponseSchema(AssetVersionJobResponseSchema):
     filename: str
 
 
+class AssetVersionTagsResponseSchema(BaseModel):
+    asset_id: UUID
+    version_id: UUID
+    version_number: int
+    keywords: list[str] = Field(default_factory=list)
+
+
 class AssetVersionSummarySchema(BaseModel):
     id: UUID
     version_number: int
@@ -76,6 +89,7 @@ class AssetVersionSummarySchema(BaseModel):
     preview_error: str | None = None
     faces_error: str | None = None
     recipe: dict[str, Any]
+    keywords: list[str] = Field(default_factory=list)
     rendered_width: int | None = None
     rendered_height: int | None = None
     is_identity_source: bool

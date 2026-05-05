@@ -311,7 +311,6 @@ def list_import_batch_identity_clusters(
         .filter(
             Asset.import_batch_id == batch_id,
             Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
-            Asset.owner_id == current_user.id,
         )
         .distinct()
         .order_by(FaceIdentity.samples_count.desc(), FaceIdentity.created_at.asc())
@@ -327,7 +326,6 @@ def list_import_batch_identity_clusters(
                 FaceDetection.identity_id == identity.id,
                 Asset.import_batch_id == batch_id,
                 Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
-                Asset.owner_id == current_user.id,
             )
             .order_by(
                 FaceDetection.review_required.desc(),
@@ -437,7 +435,6 @@ def unassign_import_batch_identity_person(
             FaceDetection.identity_id == identity.id,
             Asset.import_batch_id == batch_id,
             Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
-            Asset.owner_id == current_user.id,
         )
         .all()
     )

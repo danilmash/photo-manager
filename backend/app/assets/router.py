@@ -1,4 +1,5 @@
 import base64
+import re
 import shutil
 import uuid as uuid_mod
 from datetime import datetime
@@ -35,6 +36,8 @@ from app.assets.schemas import (
     AssetVersionJobResponseSchema,
     AssetVersionStatusSchema,
     AssetVersionSummarySchema,
+    AssetVersionTagsResponseSchema,
+    AssetVersionTagsUpdateRequest,
     AssetViewerFacePersonCandidateSchema,
     AssetViewerFaceSchema,
     AssetViewerResponseSchema,
@@ -64,6 +67,9 @@ ALLOWED_MIME_TYPES = {
     "image/heic",
     "image/heif",
 }
+MAX_VERSION_TAGS = 30
+MAX_TAG_LENGTH = 64
+SPACE_RE = re.compile(r"\s+")
 
 
 def _encode_cursor(created_at: datetime, asset_id: uuid_mod.UUID) -> str:
@@ -83,12 +89,8 @@ def _build_file_url(file_id: uuid_mod.UUID | None) -> str | None:
     return f"/api/v1/assets/files/{file_id}"
 
 
-def _require_user_asset(db: Session, asset_id: uuid_mod.UUID, user: User) -> Asset:
-    asset = (
-        db.query(Asset)
-        .filter(Asset.id == asset_id, Asset.owner_id == user.id)
-        .first()
-    )
+def _require_asset(db: Session, asset_id: uuid_mod.UUID) -> Asset:
+    asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -253,12 +255,31 @@ def _get_latest_versions_map(
     return {version.asset_id: version for version in versions}
 
 
+def _normalize_tag(value: str) -> str | None:
+    tag = SPACE_RE.sub(" ", value.strip())
+    if not tag:
+        return None
+    if len(tag) > MAX_TAG_LENGTH:
+        tag = tag[:MAX_TAG_LENGTH].rstrip()
+    return tag or None
+
+
 def _normalize_keywords(value: Any) -> list[str]:
-    if value is None:
+    if not isinstance(value, list):
         return []
-    if isinstance(value, list):
-        return [str(x) for x in value]
-    return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value[:MAX_VERSION_TAGS]:
+        tag = _normalize_tag(str(item))
+        if tag is None:
+            continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tag)
+    return out
 
 
 def _deep_get(data: dict[str, Any] | None, *paths: str) -> Any | None:
@@ -296,6 +317,7 @@ def _build_version_summary(
         preview_error=version.preview_error,
         faces_error=version.faces_error,
         recipe=normalize_recipe(version.recipe),
+        keywords=_normalize_keywords(version.keywords),
         rendered_width=version.rendered_width,
         rendered_height=version.rendered_height,
         is_identity_source=version.is_identity_source,
@@ -474,7 +496,7 @@ def list_assets(
 ):
     limit = max(1, min(limit, 200))
 
-    q = db.query(Asset).filter(Asset.owner_id == current_user.id)
+    q = db.query(Asset)
     if lifecycle == "active":
         q = q.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
     elif lifecycle == "trashed":
@@ -569,7 +591,6 @@ def search_assets_semantic(
             func.max(AssetVersion.version_number).label("max_version_number"),
         )
         .join(Asset, AssetVersion.asset_id == Asset.id)
-        .filter(Asset.owner_id == current_user.id)
         .group_by(AssetVersion.asset_id)
         .subquery()
     )
@@ -585,7 +606,6 @@ def search_assets_semantic(
                 AssetVersion.version_number == latest_sq.c.max_version_number,
             ),
         )
-        .filter(Asset.owner_id == current_user.id)
         .filter(AssetVersion.semantic_embedding.isnot(None))
         .filter(distance <= max_distance)
     )
@@ -635,11 +655,6 @@ def get_asset_file(
             detail="Файл не найден",
         )
     f, asset = row
-    if asset.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Файл не найден",
-        )
     _require_active_lifecycle(asset)
 
     path = Path(settings.storage_root) / f.path
@@ -659,7 +674,7 @@ def create_asset_version(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     latest_version = _get_latest_version(db, asset_id)
 
@@ -692,7 +707,7 @@ def create_asset_version(
         xmp=base_version.xmp if base_version else None,
         other=base_version.other if base_version else None,
         rating=base_version.rating if base_version else None,
-        keywords=list(base_version.keywords or []) if base_version else [],
+        keywords=_normalize_keywords(base_version.keywords) if base_version else [],
         is_identity_source=False,
     )
     db.add(version)
@@ -719,7 +734,7 @@ def list_asset_versions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     versions = (
         db.query(AssetVersion)
@@ -736,6 +751,34 @@ def list_asset_versions(
     )
 
 
+@router.put(
+    "/{asset_id}/versions/{version_id}/tags",
+    response_model=AssetVersionTagsResponseSchema,
+)
+def update_asset_version_tags(
+    asset_id: uuid_mod.UUID,
+    version_id: uuid_mod.UUID,
+    body: AssetVersionTagsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _require_asset(db, asset_id)
+    _require_active_lifecycle(asset)
+    version = _get_version_or_404(db, asset_id, version_id=version_id)
+
+    keywords = _normalize_keywords(body.tags)
+    version.keywords = keywords
+    db.commit()
+    db.refresh(version)
+
+    return AssetVersionTagsResponseSchema(
+        asset_id=asset.id,
+        version_id=version.id,
+        version_number=version.version_number,
+        keywords=keywords,
+    )
+
+
 @router.get("/{asset_id}", response_model=AssetViewerResponseSchema)
 def get_asset_viewer(
     asset_id: uuid_mod.UUID,
@@ -744,7 +787,7 @@ def get_asset_viewer(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     version = _get_version_or_404(
         db,
@@ -841,7 +884,7 @@ def get_asset_metadata(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     version = _get_version_or_404(
         db,
@@ -887,7 +930,7 @@ def get_asset_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     version = _get_version_or_404(db, asset_id)
     return _build_version_status_schema(version)
@@ -903,7 +946,7 @@ def retry_asset_preview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     version = _get_version_or_404(db, asset_id, version_id=version_id)
 
@@ -944,7 +987,7 @@ def retry_asset_faces(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     version = _get_version_or_404(db, asset_id, version_id=version_id)
 
@@ -983,7 +1026,7 @@ def trash_asset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_active_lifecycle(asset)
     asset.lifecycle_status = ASSET_LIFECYCLE_TRASHED
     asset.trashed_at = datetime.utcnow()
@@ -1003,7 +1046,7 @@ def permanently_delete_asset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _require_user_asset(db, asset_id, current_user)
+    asset = _require_asset(db, asset_id)
     _require_trashed_lifecycle(asset)
     paths = _collect_asset_relative_paths(db, asset.id)
     db.delete(asset)

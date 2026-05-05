@@ -405,6 +405,7 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
             preview_error: res.preview_error,
             faces_error: res.faces_error,
             recipe: {},
+            keywords: [],
             rendered_width: null,
             rendered_height: null,
             is_identity_source: false,

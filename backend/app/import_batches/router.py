@@ -1,5 +1,6 @@
 import uuid as uuid_mod
-from collections import defaultdict
+import re
+from collections import Counter, defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -43,12 +44,22 @@ from app.import_batches.schemas import (
     ImportBatchRetrySummarySchema,
     ImportBatchSchema,
     ImportBatchSetProjectRequest,
+    ImportBatchTagSuggestionItemSchema,
+    ImportBatchTagSuggestionsResponseSchema,
+    ImportBatchTagsApplyRequest,
+    ImportBatchTagsApplyResponse,
 )
 from app.projects.models import Project
 from app.users.dependencies import get_current_user
 from app.users.models import User
 
 router = APIRouter(prefix="/api/v1/import-batches", tags=["import-batches"])
+
+MAX_BATCH_TAGS = 30
+MAX_TAG_LENGTH = 64
+TAG_SUGGESTION_LIMIT = 12
+SIMILAR_BATCH_LIMIT = 5
+SPACE_RE = re.compile(r"\s+")
 
 
 def _latest_versions_sq(db: Session, batch_id):
@@ -94,6 +105,79 @@ def _build_file_url(file_id: uuid_mod.UUID | None) -> str | None:
     if not file_id:
         return None
     return f"/api/v1/assets/files/{file_id}"
+
+
+def _normalize_tag(value: str) -> str | None:
+    tag = SPACE_RE.sub(" ", value.strip())
+    if not tag:
+        return None
+    if len(tag) > MAX_TAG_LENGTH:
+        tag = tag[:MAX_TAG_LENGTH].rstrip()
+    return tag or None
+
+
+def _normalize_tags(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values[:MAX_BATCH_TAGS]:
+        tag = _normalize_tag(value)
+        if tag is None:
+            continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tag)
+    return out
+
+
+def _keywords_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            tag = _normalize_tag(item)
+            if tag is not None:
+                out.append(tag)
+    return _normalize_tags(out)
+
+
+def _suggestion_items(counter: Counter[str], limit: int = TAG_SUGGESTION_LIMIT):
+    return [
+        ImportBatchTagSuggestionItemSchema(tag=tag, count=count)
+        for tag, count in counter.most_common(limit)
+    ]
+
+
+def _latest_versions_query(db: Session, batch_id: uuid_mod.UUID | None = None):
+    latest_sq = (
+        db.query(
+            AssetVersion.asset_id.label("asset_id"),
+            func.max(AssetVersion.version_number).label("max_version_number"),
+        )
+        .join(Asset, AssetVersion.asset_id == Asset.id)
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
+    )
+    if batch_id is not None:
+        latest_sq = latest_sq.filter(Asset.import_batch_id == batch_id)
+    latest_sq = latest_sq.group_by(AssetVersion.asset_id).subquery()
+
+    query = (
+        db.query(AssetVersion, Asset.import_batch_id)
+        .join(Asset, AssetVersion.asset_id == Asset.id)
+        .join(
+            latest_sq,
+            and_(
+                AssetVersion.asset_id == latest_sq.c.asset_id,
+                AssetVersion.version_number == latest_sq.c.max_version_number,
+            ),
+        )
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
+    )
+    if batch_id is not None:
+        query = query.filter(Asset.import_batch_id == batch_id)
+    return query
 
 
 def _preview_file_ids_for_assets(
@@ -308,6 +392,126 @@ def list_import_batch_review_assets(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.post("/{batch_id}/tags", response_model=ImportBatchTagsApplyResponse)
+def apply_import_batch_tags(
+    batch_id: uuid_mod.UUID,
+    body: ImportBatchTagsApplyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    tags = _normalize_tags(body.tags)
+    if not tags:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Укажите хотя бы один тег",
+        )
+
+    rows = _latest_versions_query(db, batch.id).all()
+    updated_assets = 0
+    for version, _batch_id in rows:
+        existing = _keywords_list(version.keywords)
+        seen = {tag.casefold() for tag in existing}
+        merged = existing[:]
+        for tag in tags:
+            key = tag.casefold()
+            if key not in seen:
+                seen.add(key)
+                merged.append(tag)
+
+        if merged != existing:
+            version.keywords = merged
+            updated_assets += 1
+
+    if updated_assets:
+        db.commit()
+
+    return ImportBatchTagsApplyResponse(
+        batch_id=batch.id,
+        updated_assets=updated_assets,
+        tags=tags,
+    )
+
+
+@router.get(
+    "/{batch_id}/tag-suggestions",
+    response_model=ImportBatchTagSuggestionsResponseSchema,
+)
+def get_import_batch_tag_suggestions(
+    batch_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    rows = (
+        _latest_versions_query(db)
+        .filter(Asset.import_batch_id.is_not(None))
+        .order_by(AssetVersion.created_at.desc())
+        .all()
+    )
+
+    recent_counter: Counter[str] = Counter()
+    popular_counter: Counter[str] = Counter()
+    current_tags_counter: Counter[str] = Counter()
+    batch_counters: dict[uuid_mod.UUID, Counter[str]] = defaultdict(Counter)
+
+    for version, row_batch_id in rows:
+        tags = _keywords_list(version.keywords)
+        if not tags or row_batch_id is None:
+            continue
+
+        for tag in tags:
+            popular_counter[tag] += 1
+            batch_counters[row_batch_id][tag] += 1
+            if row_batch_id == batch.id:
+                current_tags_counter[tag] += 1
+
+        if len(recent_counter) < TAG_SUGGESTION_LIMIT:
+            for tag in tags:
+                if tag not in recent_counter:
+                    recent_counter[tag] = 1
+                    if len(recent_counter) >= TAG_SUGGESTION_LIMIT:
+                        break
+
+    current_tag_keys = {tag.casefold() for tag in current_tags_counter}
+    similar_counter: Counter[str] = Counter()
+    if current_tag_keys:
+        similar_scores: list[tuple[float, uuid_mod.UUID]] = []
+        for other_batch_id, counter in batch_counters.items():
+            if other_batch_id == batch.id:
+                continue
+            other_keys = {tag.casefold() for tag in counter}
+            intersection = current_tag_keys & other_keys
+            if not intersection:
+                continue
+            union = current_tag_keys | other_keys
+            similar_scores.append((len(intersection) / len(union), other_batch_id))
+
+        similar_scores.sort(key=lambda item: item[0], reverse=True)
+        for _score, other_batch_id in similar_scores[:SIMILAR_BATCH_LIMIT]:
+            for tag, count in batch_counters[other_batch_id].items():
+                if tag.casefold() not in current_tag_keys:
+                    similar_counter[tag] += count
+
+    return ImportBatchTagSuggestionsResponseSchema(
+        recent=_suggestion_items(recent_counter),
+        popular=_suggestion_items(popular_counter),
+        similar_batches=_suggestion_items(similar_counter),
     )
 
 

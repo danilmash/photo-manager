@@ -136,3 +136,40 @@ export async function reviewImportBatchDuplicateCandidate(
   );
   return data;
 }
+
+export interface ImportBatchTagsApplyResponse {
+  batch_id: string;
+  updated_assets: number;
+  tags: string[];
+}
+
+export interface ImportBatchTagSuggestionItem {
+  tag: string;
+  count: number;
+}
+
+export interface ImportBatchTagSuggestionsResponse {
+  recent: ImportBatchTagSuggestionItem[];
+  popular: ImportBatchTagSuggestionItem[];
+  similar_batches: ImportBatchTagSuggestionItem[];
+}
+
+export async function applyImportBatchTags(
+  batchId: string,
+  tags: string[],
+): Promise<ImportBatchTagsApplyResponse> {
+  const { data } = await api.post<ImportBatchTagsApplyResponse>(
+    `/import-batches/${batchId}/tags`,
+    { tags, mode: 'merge' },
+  );
+  return data;
+}
+
+export async function getImportBatchTagSuggestions(
+  batchId: string,
+): Promise<ImportBatchTagSuggestionsResponse> {
+  const { data } = await api.get<ImportBatchTagSuggestionsResponse>(
+    `/import-batches/${batchId}/tag-suggestions`,
+  );
+  return data;
+}

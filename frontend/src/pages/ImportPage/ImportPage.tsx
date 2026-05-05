@@ -8,6 +8,7 @@ import DuplicateSourcesSection, {
   duplicateSourcesToCarouselPhotos,
 } from '../../components/features/imports/DuplicateSourcesSection';
 import FaceIdentityClustersSection from '../../components/features/imports/FaceIdentityClustersSection';
+import ImportBatchTagsSection from '../../components/features/imports/ImportBatchTagsSection';
 import DropZone from '../../components/features/imports/DropZone';
 import ImportsSidebar from '../../components/features/imports/ImportsSidebar';
 import UploadProgressDrawer from '../../components/features/imports/UploadProgressDrawer';
@@ -87,6 +88,10 @@ export default function ImportPage() {
   const closeBatch = useImportSessionStore((s) => s.closeBatch);
   const refreshBatch = useImportSessionStore((s) => s.refreshBatch);
   const fetchBatchAssets = useImportSessionStore((s) => s.fetchBatchAssets);
+  const fetchBatchTagSuggestions = useImportSessionStore(
+    (s) => s.fetchBatchTagSuggestions,
+  );
+  const applyTagsToBatch = useImportSessionStore((s) => s.applyTagsToBatch);
   const startUploads = useImportSessionStore((s) => s.startUploads);
   const startBatchPolling = useImportSessionStore((s) => s.startBatchPolling);
   const stopBatchPolling = useImportSessionStore((s) => s.stopBatchPolling);
@@ -133,6 +138,18 @@ export default function ImportPage() {
   const updateFaceClusterAssignment = useImportSessionStore(
     (s) => s.updateFaceClusterAssignment,
   );
+  const tagSuggestions = useImportSessionStore((s) =>
+    batchId ? s.tagSuggestionsByBatch[batchId] ?? null : null,
+  );
+  const tagSuggestionsLoading = useImportSessionStore((s) =>
+    batchId ? (s.tagSuggestionsLoadingByBatch[batchId] ?? false) : false,
+  );
+  const tagSuggestionsFetchFailed = useImportSessionStore((s) =>
+    batchId ? (s.tagSuggestionsFetchFailedByBatch[batchId] ?? false) : false,
+  );
+  const tagApplyError = useImportSessionStore((s) =>
+    batchId ? (s.tagApplyErrorByBatch[batchId] ?? null) : null,
+  );
 
   const faceClustersTotal = faceClusters.length;
   const faceClustersReviewed = useMemo(
@@ -167,11 +184,19 @@ export default function ImportPage() {
     }
     void fetchBatchAssets(batchId);
     void refreshBatch(batchId);
+    void fetchBatchTagSuggestions(batchId);
     startBatchPolling(batchId);
     return () => {
       stopBatchPolling();
     };
-  }, [batchId, fetchBatchAssets, refreshBatch, startBatchPolling, stopBatchPolling]);
+  }, [
+    batchId,
+    fetchBatchAssets,
+    fetchBatchTagSuggestions,
+    refreshBatch,
+    startBatchPolling,
+    stopBatchPolling,
+  ]);
 
   const activeBatch = useMemo(
     () => (batchId ? batches.find((b) => b.id === batchId) ?? null : null),
@@ -299,6 +324,14 @@ export default function ImportPage() {
     [batchId, updateFaceClusterAssignment],
   );
 
+  const handleApplyBatchTags = useCallback(
+    async (tags: string[]) => {
+      if (!batchId) return 0;
+      return applyTagsToBatch(batchId, tags);
+    },
+    [applyTagsToBatch, batchId],
+  );
+
   return (
     <>
       <ImportsSidebar
@@ -424,6 +457,32 @@ export default function ImportPage() {
                       Партия {STATUS_LABEL[activeBatch.status]?.toLowerCase()}.
                     </div>
                   )}
+
+                  <section
+                    className={styles.reviewSection}
+                    aria-labelledby="import-batch-tags-title"
+                  >
+                    <div className={styles.reviewSectionHead}>
+                      <h2
+                        id="import-batch-tags-title"
+                        className={styles.reviewSectionTitle}
+                      >
+                        Теги партии
+                      </h2>
+                    </div>
+                    <div className={styles.reviewSectionBody}>
+                      <p className={styles.reviewLead}>
+                        Добавьте общие теги ко всем активным фото этой партии.
+                      </p>
+                      <ImportBatchTagsSection
+                        suggestions={tagSuggestions}
+                        isLoading={tagSuggestionsLoading}
+                        isFetchFailed={tagSuggestionsFetchFailed}
+                        applyError={tagApplyError}
+                        onApply={handleApplyBatchTags}
+                      />
+                    </div>
+                  </section>
 
                   <section
                     className={styles.reviewSection}

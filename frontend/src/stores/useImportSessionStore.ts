@@ -8,14 +8,17 @@ import {
   type AssetListItem,
 } from '../api/assets';
 import {
+  applyImportBatchTags,
   closeImportBatch,
   createImportBatch,
   getImportBatch,
   getImportBatchDuplicateGroups,
+  getImportBatchTagSuggestions,
   listImportBatches,
   type ImportBatch,
   type ImportBatchDuplicateCandidateItem,
   type ImportBatchDuplicateGroup,
+  type ImportBatchTagSuggestionsResponse,
 } from '../api/importBatches';
 import {
   getImportBatchFaceIdentityClusters,
@@ -58,6 +61,10 @@ interface ImportSessionState {
   faceClustersLoadedByBatch: Record<string, boolean>;
   faceClustersFetchFailedByBatch: Record<string, boolean>;
   faceClustersByBatch: Record<string, ImportBatchFaceCluster[]>;
+  tagSuggestionsByBatch: Record<string, ImportBatchTagSuggestionsResponse>;
+  tagSuggestionsLoadingByBatch: Record<string, boolean>;
+  tagSuggestionsFetchFailedByBatch: Record<string, boolean>;
+  tagApplyErrorByBatch: Record<string, string | null>;
 
   fetchBatches: () => Promise<void>;
   createBatch: () => Promise<ImportBatch>;
@@ -65,6 +72,8 @@ interface ImportSessionState {
   refreshBatch: (batchId: string) => Promise<ImportBatch | null>;
 
   fetchBatchAssets: (batchId: string) => Promise<void>;
+  fetchBatchTagSuggestions: (batchId: string) => Promise<void>;
+  applyTagsToBatch: (batchId: string, tags: string[]) => Promise<number>;
   startUploads: (batchId: string, files: File[]) => void;
   clearCompletedUploads: (batchId: string) => void;
 
@@ -195,6 +204,10 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
   faceClustersLoadedByBatch: {},
   faceClustersFetchFailedByBatch: {},
   faceClustersByBatch: {},
+  tagSuggestionsByBatch: {},
+  tagSuggestionsLoadingByBatch: {},
+  tagSuggestionsFetchFailedByBatch: {},
+  tagApplyErrorByBatch: {},
 
   fetchBatches: async () => {
     set({ isListLoading: true, listError: null });
@@ -261,6 +274,67 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
           [batchId]: false,
         },
       }));
+    }
+  },
+
+  fetchBatchTagSuggestions: async (batchId) => {
+    set((state) => ({
+      tagSuggestionsLoadingByBatch: {
+        ...state.tagSuggestionsLoadingByBatch,
+        [batchId]: true,
+      },
+      tagSuggestionsFetchFailedByBatch: {
+        ...state.tagSuggestionsFetchFailedByBatch,
+        [batchId]: false,
+      },
+    }));
+    try {
+      const suggestions = await getImportBatchTagSuggestions(batchId);
+      set((state) => ({
+        tagSuggestionsByBatch: {
+          ...state.tagSuggestionsByBatch,
+          [batchId]: suggestions,
+        },
+        tagSuggestionsLoadingByBatch: {
+          ...state.tagSuggestionsLoadingByBatch,
+          [batchId]: false,
+        },
+      }));
+    } catch {
+      set((state) => ({
+        tagSuggestionsLoadingByBatch: {
+          ...state.tagSuggestionsLoadingByBatch,
+          [batchId]: false,
+        },
+        tagSuggestionsFetchFailedByBatch: {
+          ...state.tagSuggestionsFetchFailedByBatch,
+          [batchId]: true,
+        },
+      }));
+    }
+  },
+
+  applyTagsToBatch: async (batchId, tags) => {
+    set((state) => ({
+      tagApplyErrorByBatch: {
+        ...state.tagApplyErrorByBatch,
+        [batchId]: null,
+      },
+    }));
+    try {
+      const response = await applyImportBatchTags(batchId, tags);
+      await get().fetchBatchAssets(batchId);
+      await get().fetchBatchTagSuggestions(batchId);
+      return response.updated_assets;
+    } catch (err) {
+      const message = parseError(err, 'Не удалось добавить теги к партии');
+      set((state) => ({
+        tagApplyErrorByBatch: {
+          ...state.tagApplyErrorByBatch,
+          [batchId]: message,
+        },
+      }));
+      throw err;
     }
   },
 

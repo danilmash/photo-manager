@@ -76,3 +76,25 @@ class ImportBatchDuplicatesResponseSchema(BaseModel):
 
 class DuplicateCandidateReviewRequest(BaseModel):
     decision: Literal["confirmed_duplicate", "rejected", "kept_both"]
+
+
+class ImportBatchTagsApplyRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list, max_length=30)
+    mode: Literal["merge"] = "merge"
+
+
+class ImportBatchTagsApplyResponse(BaseModel):
+    batch_id: UUID
+    updated_assets: int
+    tags: list[str]
+
+
+class ImportBatchTagSuggestionItemSchema(BaseModel):
+    tag: str
+    count: int
+
+
+class ImportBatchTagSuggestionsResponseSchema(BaseModel):
+    recent: list[ImportBatchTagSuggestionItemSchema]
+    popular: list[ImportBatchTagSuggestionItemSchema]
+    similar_batches: list[ImportBatchTagSuggestionItemSchema]

@@ -27,7 +27,11 @@
   --color-success: #4caf6a;
 
   --color-overlay: rgba(0, 0, 0, 0.6);
-  --color-overlay-dark: rgba(0, 0, 0, 0.9)
+  --color-overlay-dark: rgba(0, 0, 0, 0.9);
+
+  --color-scrollbar-track: transparent;
+  --color-scrollbar-thumb: rgba(255, 255, 255, 0.24);
+  --color-scrollbar-thumb-hover: rgba(59, 158, 255, 0.55);
 }
 
 /* ===== Light Theme ===== */
@@ -59,5 +63,9 @@
   --color-success: #3a9157;
 
   --color-overlay: rgba(0, 0, 0, 0.35);
-  --color-overlay-dark: rgba(0, 0, 0, 0.9)
+  --color-overlay-dark: rgba(0, 0, 0, 0.9);
+
+  --color-scrollbar-track: transparent;
+  --color-scrollbar-thumb: rgba(0, 0, 0, 0.22);
+  --color-scrollbar-thumb-hover: rgba(11, 111, 203, 0.5);
 }

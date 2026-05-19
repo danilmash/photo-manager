@@ -337,6 +337,8 @@ def _build_photo_info(
     other = version.other if version and isinstance(version.other, dict) else {}
 
     return AssetPhotoInfoSchema(
+        original_file_id=original_file.id if original_file else None,
+        original_url=_build_file_url(original_file.id if original_file else None),
         filename=original_file.filename if original_file else None,
         mime_type=original_file.mime_type if original_file else None,
         size_bytes=original_file.size_bytes if original_file else None,

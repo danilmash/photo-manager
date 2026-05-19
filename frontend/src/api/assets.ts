@@ -136,6 +136,8 @@ export async function getAssetStatus(assetId: string): Promise<AssetVersionStatu
  */
 
 export interface AssetPhotoInfo {
+  original_file_id: string | null;
+  original_url: string | null;
   filename: string | null;
   mime_type: string | null;
   size_bytes: number | null;

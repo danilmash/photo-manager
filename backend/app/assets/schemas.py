@@ -126,6 +126,8 @@ class AssetVersionHistoryResponseSchema(BaseModel):
 
 
 class AssetPhotoInfoSchema(BaseModel):
+    original_file_id: UUID | None = None
+    original_url: str | None = None
     filename: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None

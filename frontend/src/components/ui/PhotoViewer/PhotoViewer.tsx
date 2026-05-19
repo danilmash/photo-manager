@@ -37,10 +37,7 @@ import PhotoFacesPanel from '../PhotoFacesPanel';
 import ImportDuplicateCandidatesDrawer from './ImportDuplicateCandidatesDrawer';
 import PhotoDuplicatesDrawer from './PhotoDuplicatesDrawer';
 import PhotoEditDrawer from './PhotoEditDrawer';
-import {
-  recipeLivePreviewDeltaStyle,
-  recipeVignetteDeltaOverlayStyle,
-} from './recipeLivePreview';
+import { renderMagickPreviewUrl } from './magickPreview';
 
 interface PhotoViewerProps {
   photos: AssetListItem[];
@@ -151,7 +148,6 @@ export default function PhotoViewer({
   const [importDupDrawerOpen, setImportDupDrawerOpen] = useState(true);
   const [applyingVersion, setApplyingVersion] = useState(false);
   const [draftRecipe, setDraftRecipe] = useState<PhotoRecipe>(DEFAULT_PHOTO_RECIPE);
-  const [editBaselineRecipe, setEditBaselineRecipe] = useState<PhotoRecipe | null>(null);
   const [viewerById, setViewerById] = useState<Record<string, AssetViewer>>({});
   const [viewerLoadingById, setViewerLoadingById] = useState<Record<string, boolean>>(
     {},
@@ -162,6 +158,9 @@ export default function PhotoViewer({
   const [tagDraft, setTagDraft] = useState('');
   const [tagSaving, setTagSaving] = useState(false);
   const [tagError, setTagError] = useState<string | null>(null);
+  const [renderedPreviewUrl, setRenderedPreviewUrl] = useState<string | null>(null);
+  const [renderingPreview, setRenderingPreview] = useState(false);
+  const [previewRenderError, setPreviewRenderError] = useState<string | null>(null);
   const [imageMetrics, setImageMetrics] = useState<ImageMetrics | null>(null);
   const [imageSettled, setImageSettled] = useState(false);
   const [activeFaceId, setActiveFaceId] = useState<string | null>(null);
@@ -172,6 +171,8 @@ export default function PhotoViewer({
   const imgRef = useRef<HTMLImageElement>(null);
   const viewerByIdRef = useRef<Record<string, AssetViewer>>({});
   const viewerRequestIdRef = useRef<Record<string, number>>({});
+  const previewRenderRequestIdRef = useRef(0);
+  const renderedPreviewUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (currentIndex > prevIndexRef.current) {
@@ -227,15 +228,7 @@ export default function PhotoViewer({
     currentPhoto?.version?.thumbnail_url,
   ]);
 
-  const livePreviewImgStyle = useMemo(() => {
-    if (!editDrawerOpen || !editBaselineRecipe) return undefined;
-    return recipeLivePreviewDeltaStyle(draftRecipe, editBaselineRecipe);
-  }, [editDrawerOpen, draftRecipe, editBaselineRecipe]);
-
-  const liveVignetteStyle = useMemo(() => {
-    if (!editDrawerOpen || !editBaselineRecipe) return null;
-    return recipeVignetteDeltaOverlayStyle(draftRecipe, editBaselineRecipe);
-  }, [editDrawerOpen, draftRecipe, editBaselineRecipe]);
+  const displayPhotoSrc = renderedPreviewUrl ?? photoSrc;
 
   useEffect(() => {
     viewerByIdRef.current = viewerById;
@@ -333,15 +326,74 @@ export default function PhotoViewer({
   }, [moveDrawerPaddingOpen]);
 
   useEffect(() => {
-    if (!editDrawerOpen) {
-      setEditBaselineRecipe(null);
-      return;
-    }
+    if (!editDrawerOpen) return;
     if (!currentViewer?.version) return;
     const normalized = normalizeRecipe(currentViewer.version.recipe);
-    setEditBaselineRecipe(normalized);
     setDraftRecipe(normalized);
   }, [editDrawerOpen, currentViewer?.version?.id]);
+
+  useEffect(() => {
+    if (!editDrawerOpen || !currentViewer?.photo.original_url || !currentViewer.version) {
+      previewRenderRequestIdRef.current += 1;
+      setRenderingPreview(false);
+      setPreviewRenderError(null);
+      setRenderedPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        renderedPreviewUrlRef.current = null;
+        return null;
+      });
+      return;
+    }
+
+    const requestId = previewRenderRequestIdRef.current + 1;
+    previewRenderRequestIdRef.current = requestId;
+    setRenderingPreview(true);
+    setPreviewRenderError(null);
+
+    const timer = window.setTimeout(() => {
+      void renderMagickPreviewUrl(currentViewer.photo.original_url!, draftRecipe)
+        .then((nextUrl) => {
+          if (previewRenderRequestIdRef.current !== requestId) {
+            URL.revokeObjectURL(nextUrl);
+            return;
+          }
+
+          setRenderedPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            renderedPreviewUrlRef.current = nextUrl;
+            return nextUrl;
+          });
+        })
+        .catch(() => {
+          if (previewRenderRequestIdRef.current === requestId) {
+            setPreviewRenderError('Не удалось построить live preview через ImageMagick');
+          }
+        })
+        .finally(() => {
+          if (previewRenderRequestIdRef.current === requestId) {
+            setRenderingPreview(false);
+          }
+        });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    draftRecipe,
+    editDrawerOpen,
+    currentViewer?.photo.original_url,
+    currentViewer?.version?.id,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (renderedPreviewUrlRef.current) {
+        URL.revokeObjectURL(renderedPreviewUrlRef.current);
+        renderedPreviewUrlRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setTagDraft('');
@@ -433,7 +485,7 @@ export default function PhotoViewer({
   useEffect(() => {
     setImageSettled(false);
     setImageMetrics(null);
-  }, [currentPhoto?.asset_id, photoSrc]);
+  }, [currentPhoto?.asset_id, displayPhotoSrc]);
 
   useEffect(() => {
     if (!currentPhoto?.asset_id) return;
@@ -830,9 +882,9 @@ export default function PhotoViewer({
 
       <div ref={stageRef} className={styles.stage}>
         <AnimatePresence initial={false} custom={direction} mode="wait">
-          {photoSrc ? (
+          {displayPhotoSrc ? (
             <motion.div
-              key={currentPhoto.asset_id ?? `${currentIndex}-${photoSrc}`}
+              key={currentPhoto.asset_id ?? `${currentIndex}-${displayPhotoSrc}`}
               className={styles['image-wrap']}
               custom={direction}
               variants={variants}
@@ -852,10 +904,9 @@ export default function PhotoViewer({
             >
               <img
                 ref={imgRef}
-                src={photoSrc}
+                src={displayPhotoSrc}
                 alt="Фотография"
                 className={styles['image-inner']}
-                style={livePreviewImgStyle}
                 draggable={false}
                 onLoad={() => {
                   requestAnimationFrame(() => {
@@ -863,8 +914,11 @@ export default function PhotoViewer({
                   });
                 }}
               />
-              {liveVignetteStyle ? (
-                <div style={liveVignetteStyle} aria-hidden />
+              {renderingPreview ? (
+                <div className={styles['render-status']}>ImageMagick preview...</div>
+              ) : null}
+              {previewRenderError ? (
+                <div className={styles['render-status']}>{previewRenderError}</div>
               ) : null}
             </motion.div>
           ) : (
@@ -886,7 +940,7 @@ export default function PhotoViewer({
           )}
         </AnimatePresence>
 
-        {faceBoxes.length > 0 && (
+        {!editDrawerOpen && faceBoxes.length > 0 && (
           <div className={styles.overlay} aria-hidden="true">
             {faceBoxes.map((box, index) => (
               <div

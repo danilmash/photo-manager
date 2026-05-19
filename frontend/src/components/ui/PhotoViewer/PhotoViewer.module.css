@@ -17,7 +17,7 @@
     margin-bottom: -80px;
 }
 
-/* Обёртка под Framer Motion + живое превью (filter на <img>, не на motion). */
+/* Обёртка под Framer Motion и rendered live preview. */
 .image-wrap {
     position: absolute;
     inset: 0;
@@ -28,6 +28,23 @@
     max-width: 100%;
     max-height: 95%;
     will-change: transform, opacity;
+}
+
+.render-status {
+    position: absolute;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    max-width: min(420px, calc(100% - 48px));
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(15, 15, 15, 0.72);
+    color: #fff;
+    font-size: var(--font-size-xs);
+    line-height: 1.2;
+    text-align: center;
+    pointer-events: none;
+    backdrop-filter: blur(10px);
 }
 
 .image-inner {

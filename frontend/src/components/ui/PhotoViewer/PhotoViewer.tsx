@@ -11,9 +11,13 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Columns2,
   Copy,
   Info,
+  Maximize2,
   SlidersHorizontal,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 
 import styles from './PhotoViewer.module.css';
@@ -37,7 +41,11 @@ import PhotoFacesPanel from '../PhotoFacesPanel';
 import ImportDuplicateCandidatesDrawer from './ImportDuplicateCandidatesDrawer';
 import PhotoDuplicatesDrawer from './PhotoDuplicatesDrawer';
 import PhotoEditDrawer from './PhotoEditDrawer';
+import PhotoCompareStage from './PhotoCompareStage';
+import ZoomableImageStage from './ZoomableImageStage';
 import { renderMagickPreviewUrl } from './magickPreview';
+import { useImageViewport } from './useImageViewport';
+import type { ViewportMetrics } from './viewportMath';
 
 interface PhotoViewerProps {
   photos: AssetListItem[];
@@ -71,19 +79,20 @@ const variants = {
   enter: (direction: Direction) => ({
     x: direction > 0 ? 64 : -64,
     opacity: 0,
-    scale: 0.985,
   }),
   center: {
     x: 0,
     opacity: 1,
-    scale: 1,
   },
   exit: (direction: Direction) => ({
     x: direction > 0 ? -64 : 64,
     opacity: 0,
-    scale: 0.985,
   }),
 };
+
+function assetListPreviewSrc(item: AssetListItem): string {
+  return item.version?.preview_url || item.version?.thumbnail_url || '';
+}
 
 function toFiniteNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -164,6 +173,11 @@ export default function PhotoViewer({
   const [imageMetrics, setImageMetrics] = useState<ImageMetrics | null>(null);
   const [imageSettled, setImageSettled] = useState(false);
   const [activeFaceId, setActiveFaceId] = useState<string | null>(null);
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareAssetId, setCompareAssetId] = useState<string | null>(null);
+  const [compareSrc, setCompareSrc] = useState('');
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareLabel, setCompareLabel] = useState('');
 
   const prevIndexRef = useRef(currentIndex);
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -173,6 +187,8 @@ export default function PhotoViewer({
   const viewerRequestIdRef = useRef<Record<string, number>>({});
   const previewRenderRequestIdRef = useRef(0);
   const renderedPreviewUrlRef = useRef<string | null>(null);
+  const compareImgRef = useRef<HTMLImageElement>(null);
+  const viewportMetricsRef = useRef<ViewportMetrics | null>(null);
 
   useEffect(() => {
     if (currentIndex > prevIndexRef.current) {
@@ -229,6 +245,17 @@ export default function PhotoViewer({
   ]);
 
   const displayPhotoSrc = renderedPreviewUrl ?? photoSrc;
+
+  const viewportResetKey = currentPhoto?.asset_id ?? null;
+  const viewportApi = useImageViewport({
+    resetKey: viewportResetKey,
+    metricsRef: viewportMetricsRef,
+  });
+
+  const recalculateBounds = viewportApi.recalculateBounds;
+  const handleViewportMetricsChange = useCallback(() => {
+    recalculateBounds();
+  }, [recalculateBounds]);
 
   useEffect(() => {
     viewerByIdRef.current = viewerById;
@@ -593,6 +620,76 @@ export default function PhotoViewer({
     onSelect(index);
   };
 
+  const handleCompareSelect = useCallback(
+    (assetId: string) => {
+      if (!currentPhoto || assetId === currentPhoto.asset_id) return;
+      setCompareAssetId(assetId);
+      setCompareMode(true);
+    },
+    [currentPhoto?.asset_id],
+  );
+
+  const handleCarouselCompareSelect = useCallback(
+    (assetId: string, index: number) => {
+      if (!compareMode) return;
+      if (index === currentIndex) return;
+      handleCompareSelect(assetId);
+    },
+    [compareMode, currentIndex, handleCompareSelect],
+  );
+
+  const toggleCompareMode = useCallback(() => {
+    setCompareMode((prev) => {
+      if (prev) {
+        setCompareAssetId(null);
+        viewportApi.reset();
+      }
+      return !prev;
+    });
+  }, [viewportApi]);
+
+  useEffect(() => {
+    if (!compareAssetId) {
+      setCompareSrc('');
+      setCompareLabel('');
+      setCompareLoading(false);
+      return;
+    }
+
+    const inList = photos.find((item) => item.asset_id === compareAssetId);
+    if (inList) {
+      setCompareSrc(assetListPreviewSrc(inList));
+      setCompareLabel(inList.title?.trim() || 'Сравнение');
+      setCompareLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCompareLoading(true);
+
+    void getAssetViewer(compareAssetId)
+      .then((data) => {
+        if (cancelled) return;
+        const url =
+          data.version?.preview_url || data.version?.thumbnail_url || '';
+        setCompareSrc(url);
+        setCompareLabel(data.title?.trim() || 'Сравнение');
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCompareSrc('');
+          setCompareLabel('Сравнение');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCompareLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [compareAssetId, photos]);
+
   const renderValue = (value: unknown) => {
     if (value === null || value === undefined || value === '') return '—';
     return String(value);
@@ -614,6 +711,38 @@ export default function PhotoViewer({
         </div>
 
         <div className={styles['options-buttons']}>
+          <Button
+            color={compareMode ? 'primary' : 'muted'}
+            variant="ghost"
+            onClick={toggleCompareMode}
+            icon={<Columns2 />}
+            size="xl"
+            aria-label={compareMode ? 'Закрыть сравнение' : 'Сравнение'}
+          />
+          <Button
+            color="muted"
+            variant="ghost"
+            onClick={viewportApi.zoomIn}
+            icon={<ZoomIn />}
+            size="xl"
+            aria-label="Приблизить"
+          />
+          <Button
+            color="muted"
+            variant="ghost"
+            onClick={viewportApi.zoomOut}
+            icon={<ZoomOut />}
+            size="xl"
+            aria-label="Отдалить"
+          />
+          <Button
+            color="muted"
+            variant="ghost"
+            onClick={viewportApi.reset}
+            icon={<Maximize2 />}
+            size="xl"
+            aria-label="Сбросить масштаб"
+          />
           <Button
             color="muted"
             variant="ghost"
@@ -864,6 +993,7 @@ export default function PhotoViewer({
             importBatchId={duplicateBatchId}
             duplicateOfAssetId={duplicateOfId}
             adjustContainerPadding={false}
+            onCompareSelect={handleCompareSelect}
           />
         ) : null}
 
@@ -876,12 +1006,54 @@ export default function PhotoViewer({
             group={currentImportDupGroup}
             onCandidateReviewed={importDuplicateSourcesReview.onCandidateReviewed}
             adjustContainerPadding={false}
+            onCompareSelect={handleCompareSelect}
           />
         ) : null}
       </div>
 
-      <div ref={stageRef} className={styles.stage}>
-        <AnimatePresence initial={false} custom={direction} mode="wait">
+      <div
+        ref={stageRef}
+        className={compareMode ? `${styles.stage} ${styles.stageCompare}` : styles.stage}
+      >
+        {compareMode ? (
+          <PhotoCompareStage
+            viewportApi={viewportApi}
+            metricsRef={viewportMetricsRef}
+            minimapSrc={displayPhotoSrc || undefined}
+            onMetricsChange={handleViewportMetricsChange}
+            leftLabel={
+              currentViewer?.title?.trim() ||
+              currentPhoto.title?.trim() ||
+              'Текущее'
+            }
+            rightLabel={compareLoading ? 'Загрузка…' : compareLabel || 'Сравнение'}
+            leftSrc={displayPhotoSrc || undefined}
+            rightSrc={compareSrc || undefined}
+            leftImageRef={imgRef}
+            rightImageRef={compareImgRef}
+            onLeftImageLoad={() => {
+              requestAnimationFrame(() => {
+                updateImageMetrics();
+              });
+            }}
+            rightEmptyLabel={
+              compareLoading
+                ? 'Загрузка превью…'
+                : 'Выберите фото в карусели или в списке дубликатов'
+            }
+            leftOverlay={
+              <>
+                {renderingPreview ? (
+                  <div className={styles['render-status']}>ImageMagick preview...</div>
+                ) : null}
+                {previewRenderError ? (
+                  <div className={styles['render-status']}>{previewRenderError}</div>
+                ) : null}
+              </>
+            }
+          />
+        ) : (
+          <AnimatePresence initial={false} custom={direction} mode="wait">
           {displayPhotoSrc ? (
             <motion.div
               key={currentPhoto.asset_id ?? `${currentIndex}-${displayPhotoSrc}`}
@@ -902,24 +1074,27 @@ export default function PhotoViewer({
                 });
               }}
             >
-              <img
-                ref={imgRef}
+              <ZoomableImageStage
+                fill
+                viewport={viewportApi.viewport}
+                handlers={viewportApi.handlers}
                 src={displayPhotoSrc}
-                alt="Фотография"
-                className={styles['image-inner']}
-                draggable={false}
-                onLoad={() => {
+                imageRef={imgRef}
+                metricsRef={viewportMetricsRef}
+                onMetricsChange={handleViewportMetricsChange}
+                onImageLoad={() => {
                   requestAnimationFrame(() => {
                     updateImageMetrics();
                   });
                 }}
-              />
+              >
               {renderingPreview ? (
                 <div className={styles['render-status']}>ImageMagick preview...</div>
               ) : null}
               {previewRenderError ? (
                 <div className={styles['render-status']}>{previewRenderError}</div>
               ) : null}
+              </ZoomableImageStage>
             </motion.div>
           ) : (
             <motion.div
@@ -939,8 +1114,12 @@ export default function PhotoViewer({
             </motion.div>
           )}
         </AnimatePresence>
+        )}
 
-        {!editDrawerOpen && faceBoxes.length > 0 && (
+        {!compareMode &&
+          !editDrawerOpen &&
+          !viewportApi.isZoomed &&
+          faceBoxes.length > 0 && (
           <div className={styles.overlay} aria-hidden="true">
             {faceBoxes.map((box, index) => (
               <div
@@ -1000,6 +1179,9 @@ export default function PhotoViewer({
           photos={photos}
           currentIndex={currentIndex}
           onSelect={handleSelect}
+          compareMode={compareMode}
+          compareAssetId={compareAssetId}
+          onCompareSelect={handleCarouselCompareSelect}
         />
       </div>
     </div>

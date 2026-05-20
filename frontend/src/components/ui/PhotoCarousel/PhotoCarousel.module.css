@@ -8,11 +8,20 @@
     scrollbar-width: none;
 }
 
-.photo-carousel img {
+.thumb {
     width: 100px;
     height: 100px;
     object-fit: contain;
     border-radius: 8px;
     cursor: pointer;
     border: 2px solid transparent;
+}
+
+.active {
+    border-color: var(--color-accent);
+}
+
+.comparePick {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
 }

@@ -1,10 +1,15 @@
 from contextlib import asynccontextmanager
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import base64
 import numpy as np
 from io import BytesIO
 from PIL import Image
+
+from app.clip_worker import embed_image_task, embed_text_task
 
 
 class DetectRequest(BaseModel):
@@ -35,9 +40,35 @@ class EmbeddingResponse(BaseModel):
     embedding: list[float]
 
 
-_clip_model = None
-_clip_preprocess = None
-_clip_tokenizer = None
+_mp_ctx = mp.get_context("spawn")
+_clip_pool: ProcessPoolExecutor | None = None
+_CLIP_TASK_TIMEOUT_SEC = 180
+
+
+def _get_clip_pool() -> ProcessPoolExecutor:
+    global _clip_pool
+    if _clip_pool is None:
+        _clip_pool = ProcessPoolExecutor(max_workers=1, mp_context=_mp_ctx)
+    return _clip_pool
+
+
+def _shutdown_clip_pool() -> None:
+    global _clip_pool
+    if _clip_pool is not None:
+        _clip_pool.shutdown(wait=False, cancel_futures=True)
+        _clip_pool = None
+
+
+def _run_clip_task(fn, *args) -> list[float]:
+    pool = _get_clip_pool()
+    future = pool.submit(fn, *args)
+    try:
+        return future.result(timeout=_CLIP_TASK_TIMEOUT_SEC)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"CLIP worker failed: {exc}",
+        ) from exc
 
 
 def load_model():
@@ -55,31 +86,11 @@ def load_model():
         pass
 
 
-def load_clip_model():
-    global _clip_model, _clip_preprocess, _clip_tokenizer
-    if _clip_model is not None:
-        return _clip_model, _clip_preprocess, _clip_tokenizer
-
-    import open_clip
-    import torch
-
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        "xlm-roberta-base-ViT-B-32",
-        pretrained="laion5b_s13b_b90k",
-    )
-    model.eval()
-    model.to("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = open_clip.get_tokenizer("xlm-roberta-base-ViT-B-32")
-    _clip_model = model
-    _clip_preprocess = preprocess
-    _clip_tokenizer = tokenizer
-    return model, preprocess, tokenizer
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     load_model()
     yield
+    _shutdown_clip_pool()
 
 
 app = FastAPI(title="Photo Manager ML Service", lifespan=lifespan)
@@ -115,14 +126,26 @@ def _is_full_frame_fallback(
     )
 
 
+def _decode_image_b64(image_b64: str, max_side: int = 1024) -> np.ndarray:
+    image_bytes = base64.b64decode(image_b64)
+    img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    width, height = img.size
+    longest = max(width, height)
+    if longest > max_side:
+        scale = max_side / longest
+        img = img.resize(
+            (max(1, int(width * scale)), max(1, int(height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+    return np.array(img)
+
+
 @app.post("/detect", response_model=DetectResponse)
 def detect_faces(body: DetectRequest):
     from deepface import DeepFace
 
     try:
-        image_bytes = base64.b64decode(body.image_b64)
-        img = Image.open(BytesIO(image_bytes)).convert("RGB")
-        img_array = np.array(img)
+        img_array = _decode_image_b64(body.image_b64, max_side=1024)
     except Exception:
         raise HTTPException(status_code=400, detail="Невалидное изображение")
 
@@ -179,51 +202,21 @@ def detect_faces(body: DetectRequest):
     return DetectResponse(faces=faces)
 
 
-def _normalized_vector_to_list(vec) -> list[float]:
-    norm = np.linalg.norm(vec)
-    if norm > 0:
-        vec = vec / norm
-    return [float(x) for x in vec.tolist()]
-
-
 @app.post("/embed-image", response_model=EmbeddingResponse)
 def embed_image(body: EmbedImageRequest):
-    import torch
-
-    try:
-        image_bytes = base64.b64decode(body.image_b64)
-        img = Image.open(BytesIO(image_bytes)).convert("RGB")
-    except Exception:
+    if not body.image_b64:
         raise HTTPException(status_code=400, detail="Невалидное изображение")
-
-    try:
-        model, preprocess, _ = load_clip_model()
-        device = next(model.parameters()).device
-        image = preprocess(img).unsqueeze(0).to(device)
-        with torch.no_grad():
-            embedding = model.encode_image(image)[0].detach().cpu().numpy()
-        return EmbeddingResponse(embedding=_normalized_vector_to_list(embedding))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    embedding = _run_clip_task(embed_image_task, body.image_b64)
+    return EmbeddingResponse(embedding=embedding)
 
 
 @app.post("/embed-text", response_model=EmbeddingResponse)
 def embed_text(body: EmbedTextRequest):
-    import torch
-
     text = (body.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Пустой поисковый запрос")
-
-    try:
-        model, _, tokenizer = load_clip_model()
-        device = next(model.parameters()).device
-        tokens = tokenizer([text]).to(device)
-        with torch.no_grad():
-            embedding = model.encode_text(tokens)[0].detach().cpu().numpy()
-        return EmbeddingResponse(embedding=_normalized_vector_to_list(embedding))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    embedding = _run_clip_task(embed_text_task, text)
+    return EmbeddingResponse(embedding=embedding)
 
 
 @app.get("/health")

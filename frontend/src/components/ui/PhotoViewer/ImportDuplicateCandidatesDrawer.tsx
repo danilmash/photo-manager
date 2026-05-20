@@ -20,6 +20,7 @@ interface ImportDuplicateCandidatesDrawerProps {
   group: ImportBatchDuplicateGroup;
   onCandidateReviewed: (updated: ImportBatchDuplicateCandidateItem) => void;
   adjustContainerPadding?: boolean;
+  onCompareSelect?: (assetId: string) => void;
 }
 
 function imgSrc(url: string | null): string | undefined {
@@ -48,6 +49,7 @@ interface CandidateVerdictRowProps {
   busyDecision: DuplicateReviewDecision | null;
   onBusy: (id: string | null, decision: DuplicateReviewDecision | null) => void;
   onCandidateReviewed: (updated: ImportBatchDuplicateCandidateItem) => void;
+  onCompareSelect?: (assetId: string) => void;
 }
 
 function CandidateVerdictRow({
@@ -57,6 +59,7 @@ function CandidateVerdictRow({
   busyDecision,
   onBusy,
   onCandidateReviewed,
+  onCompareSelect,
 }: CandidateVerdictRowProps) {
   const [error, setError] = useState<string | null>(null);
 
@@ -112,6 +115,17 @@ function CandidateVerdictRow({
           )}
         </div>
         <div className={styles.actions}>
+          {onCompareSelect ? (
+            <Button
+              color="secondary"
+              variant="outline"
+              size="sm"
+              disabled={busyCandidateId !== null}
+              onClick={() => onCompareSelect(candidate.candidate_asset_id)}
+            >
+              Сравнить
+            </Button>
+          ) : null}
           <Button
             color="primary"
             variant="filled"
@@ -154,6 +168,7 @@ export default function ImportDuplicateCandidatesDrawer({
   group,
   onCandidateReviewed,
   adjustContainerPadding = true,
+  onCompareSelect,
 }: ImportDuplicateCandidatesDrawerProps) {
   const sorted = useMemo(
     () => [...group.candidates].sort((a, b) => a.rank - b.rank),
@@ -199,6 +214,7 @@ export default function ImportDuplicateCandidatesDrawer({
                 busyDecision={busyDecision}
                 onBusy={setBusy}
                 onCandidateReviewed={onCandidateReviewed}
+                onCompareSelect={onCompareSelect}
               />
             ))}
           </ul>

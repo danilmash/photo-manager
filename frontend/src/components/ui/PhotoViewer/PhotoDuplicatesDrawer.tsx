@@ -5,6 +5,7 @@ import {
   type ImportBatchDuplicateGroup,
 } from '../../../api/importBatches';
 import { getAssetViewer } from '../../../api/assets';
+import Button from '../Button';
 import Drawer from '../Drawer';
 import {
   collectDuplicatePeers,
@@ -22,6 +23,7 @@ interface PhotoDuplicatesDrawerProps {
   importBatchId: string;
   duplicateOfAssetId: string | null;
   adjustContainerPadding?: boolean;
+  onCompareSelect?: (assetId: string) => void;
 }
 
 function resolveImgSrc(url: string | null): string | undefined {
@@ -38,6 +40,7 @@ export default function PhotoDuplicatesDrawer({
   importBatchId,
   duplicateOfAssetId,
   adjustContainerPadding = true,
+  onCompareSelect,
 }: PhotoDuplicatesDrawerProps) {
   const [groups, setGroups] = useState<ImportBatchDuplicateGroup[]>([]);
   const [loading, setLoading] = useState(false);
@@ -173,6 +176,18 @@ export default function PhotoDuplicatesDrawer({
                     {item.relation === 'sibling_candidate' &&
                       'Другой кандидат к тому же источнику'}
                   </div>
+                  {onCompareSelect ? (
+                    <div className={styles.actions}>
+                      <Button
+                        color="secondary"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onCompareSelect(item.asset_id)}
+                      >
+                        Сравнить
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </li>
             ))}

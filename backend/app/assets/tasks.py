@@ -578,6 +578,13 @@ def process_asset_ml(version_id: str):
         db.commit()
 
         try:
+            db.query(FaceDetection).filter_by(asset_version_id=version.id).delete()
+            db.flush()
+
+            # Сначала лица (только DeepFace), затем CLIP — меньше пик RAM в ml-контейнере.
+            _save_face_detections(db, version, preview_path)
+            db.flush()
+
             try:
                 version.semantic_embedding = embed_image(str(preview_path))
                 db.commit()
@@ -586,11 +593,6 @@ def process_asset_ml(version_id: str):
                 version = db.query(AssetVersion).filter_by(id=version_uuid).first()
                 if not version:
                     return
-
-            db.query(FaceDetection).filter_by(asset_version_id=version.id).delete()
-            db.flush()
-
-            _save_face_detections(db, version, preview_path)
             db.flush()
 
             transfer_user_assignments_from_base_version(

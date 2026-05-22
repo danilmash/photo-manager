@@ -21,6 +21,7 @@
 @media (max-width: 768px) {
   .content {
     padding: 0;
-    padding-bottom: 4.5rem;
+    padding-top: var(--app-mobile-header-height);
+    padding-bottom: calc(var(--app-mobile-nav-height) + 1rem);
   }
 }

@@ -1,18 +1,37 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Images, FolderOpen, Settings, Sun, Moon, Upload } from 'lucide-react';
+import { Home, Settings, Sun, Moon, Upload, Users } from 'lucide-react';
 import { useThemeStore } from '../../../stores/useThemeStore';
+import { useAuthStore } from '../../../stores/useAuthStore';
+import UserMenu from '../UserMenu';
 import styles from './Header.module.css';
 
-const navItems = [
+const baseNavItems = [
   { to: '/', label: 'Главная', icon: Home },
-  { to: '/gallery', label: 'Галерея', icon: Images },
   { to: '/import', label: 'Импорт', icon: Upload },
-  { to: '/albums', label: 'Альбомы', icon: FolderOpen },
   { to: '/settings', label: 'Настройки', icon: Settings },
 ] as const;
 
-export default function Header() {
+const adminNavItem = { to: '/admin/users', label: 'Пользователи', icon: Users } as const;
+
+function ThemeToggle() {
   const { theme, toggleTheme } = useThemeStore();
+  return (
+    <button
+      className={styles['theme-toggle']}
+      onClick={toggleTheme}
+      aria-label="Переключить тему"
+      type="button"
+    >
+      {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+    </button>
+  );
+}
+
+export default function Header() {
+  const user = useAuthStore((s) => s.user);
+
+  const navItems =
+    user?.role === 'admin' ? [...baseNavItems, adminNavItem] : [...baseNavItems];
 
   return (
     <header className={styles.header} aria-label="Навигация приложения">
@@ -33,13 +52,18 @@ export default function Header() {
           ))}
         </nav>
 
-        <button
-          className={styles['theme-toggle']}
-          onClick={toggleTheme}
-          aria-label="Переключить тему"
-        >
-          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
+        <div className={styles['top-actions']}>
+          <UserMenu />
+          <ThemeToggle />
+        </div>
+      </div>
+
+      <div className={styles['mobile-bar']}>
+        <span className={styles.logo}>Photo Manager</span>
+        <div className={styles['top-actions']}>
+          <UserMenu compact />
+          <ThemeToggle />
+        </div>
       </div>
 
       <nav className={styles['bottom-nav']}>

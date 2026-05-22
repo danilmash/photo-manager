@@ -2,10 +2,9 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/ui/Layout';
 import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
-import GalleryPage from './pages/GalleryPage';
-import AlbumsPage from './pages/AlbumsPage';
 import SettingsPage from './pages/SettingsPage';
 import ImportPage from './pages/ImportPage';
+import AdminUsersPage from './pages/AdminUsersPage';
 
 export default function App() {
   return (
@@ -16,9 +15,8 @@ export default function App() {
           <Route index element={<HomePage />} />
           <Route path="import" element={<ImportPage />} />
           <Route path="import/:batchId" element={<ImportPage />} />
-          <Route path="gallery" element={<GalleryPage />} />
-          <Route path="albums" element={<AlbumsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="admin/users" element={<AdminUsersPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -13,6 +13,7 @@
     но которые сами ничего не знают о layout.
   */
   --app-header-height: 3rem;
+  --app-mobile-header-height: 2.75rem;
   --app-mobile-nav-height: 3.5rem;
 }
 

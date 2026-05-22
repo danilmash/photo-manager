@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.config import settings
 from app.database import SessionLocal
 from app.users.router import router as auth_router
+from app.users.users_router import router as users_router
 from app.assets.router import router as assets_router
 from app.faces.router import router as faces_router
 from app.import_batches.router import router as import_batches_router
@@ -38,6 +39,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(assets_router)
 app.include_router(faces_router)
 app.include_router(import_batches_router)

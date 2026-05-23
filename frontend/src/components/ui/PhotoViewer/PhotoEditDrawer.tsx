@@ -1,6 +1,7 @@
 import type { PhotoRecipe } from '../../../api/recipe';
 import Button from '../Button';
 import PhotoEditSlider from '../PhotoEditSlider';
+import { PHOTO_EDIT_CONTROLS } from './photoEditControls';
 import styles from './PhotoEditDrawer.module.css';
 
 export interface PhotoEditDrawerProps {
@@ -27,107 +28,20 @@ export default function PhotoEditDrawer({
           <p className={styles.hint}>Нет данных версии для редактирования.</p>
         ) : (
           <div className={styles.sliders}>
-            <PhotoEditSlider
-              label="Экспозиция"
-              value={recipe.exposure}
-              min={-100}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, exposure: v })}
-            />
-            <PhotoEditSlider
-              label="Контраст"
-              value={recipe.contrast}
-              min={-100}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, contrast: v })}
-            />
-            <PhotoEditSlider
-              label="Светлые участки"
-              value={recipe.highlights}
-              min={-100}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, highlights: v })}
-            />
-            <PhotoEditSlider
-              label="Тени"
-              value={recipe.shadows}
-              min={-100}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, shadows: v })}
-            />
-            <PhotoEditSlider
-              label="Температура"
-              value={recipe.temperature}
-              min={-100}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, temperature: v })}
-            />
-            <PhotoEditSlider
-              label="Оттенок"
-              value={recipe.tint}
-              min={-100}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, tint: v })}
-            />
-            <PhotoEditSlider
-              label="Насыщенность"
-              value={recipe.saturation}
-              min={-100}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, saturation: v })}
-            />
-            <PhotoEditSlider
-              label="Резкость"
-              value={recipe.sharpness}
-              min={0}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, sharpness: v })}
-            />
-            <PhotoEditSlider
-              label="Виньетирование"
-              value={recipe.vignette}
-              min={0}
-              max={100}
-              step={1}
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, vignette: v })}
-            />
-            <PhotoEditSlider
-              label="Поворот"
-              value={recipe.rotation_degrees}
-              min={-180}
-              max={180}
-              step={1}
-              unit="°"
-              defaultValue={0}
-              disabled={locked}
-              onChange={(v) => onRecipeChange({ ...recipe, rotation_degrees: v })}
-            />
+            {PHOTO_EDIT_CONTROLS.map((control) => (
+              <PhotoEditSlider
+                key={control.key}
+                label={control.label}
+                value={control.getValue(recipe)}
+                min={control.min}
+                max={control.max}
+                step={control.step}
+                defaultValue={control.defaultValue}
+                unit={control.unit}
+                disabled={locked}
+                onChange={(value) => onRecipeChange(control.patch(recipe, value))}
+              />
+            ))}
           </div>
         )}
       </div>

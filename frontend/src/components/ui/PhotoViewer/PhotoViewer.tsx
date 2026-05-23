@@ -41,7 +41,9 @@ import PhotoFacesPanel from '../PhotoFacesPanel';
 import ImportDuplicateCandidatesDrawer from './ImportDuplicateCandidatesDrawer';
 import PhotoDuplicatesDrawer from './PhotoDuplicatesDrawer';
 import PhotoEditDrawer from './PhotoEditDrawer';
+import PhotoEditMobileOverlay from './PhotoEditMobileOverlay';
 import PhotoCompareStage from './PhotoCompareStage';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../../hooks/useMediaQuery';
 import ZoomableImageStage from './ZoomableImageStage';
 import { renderMagickPreviewUrl } from './magickPreview';
 import { useImageViewport } from './useImageViewport';
@@ -179,6 +181,9 @@ export default function PhotoViewer({
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareLabel, setCompareLabel] = useState('');
 
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const isEditing = editDrawerOpen;
+
   const prevIndexRef = useRef(currentIndex);
   const viewerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -202,6 +207,8 @@ export default function PhotoViewer({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (editDrawerOpen) return;
+
       if (event.key === 'ArrowLeft') {
         setDirection(-1);
         onPrevious();
@@ -215,7 +222,7 @@ export default function PhotoViewer({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onNext, onPrevious]);
+  }, [editDrawerOpen, onNext, onPrevious]);
 
   const currentPhoto = photos[currentIndex];
 
@@ -335,7 +342,7 @@ export default function PhotoViewer({
 
   const moveDrawerPaddingOpen =
     infoDrawerOpen ||
-    editDrawerOpen ||
+    (editDrawerOpen && !isMobile) ||
     (showDuplicatesEntry && duplicatesDrawerOpen) ||
     Boolean(importDuplicateSourcesReview && currentImportDupGroup && importDupDrawerOpen);
 
@@ -351,6 +358,18 @@ export default function PhotoViewer({
       el.style.paddingRight = '0px';
     };
   }, [moveDrawerPaddingOpen]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditDrawerOpen(false);
+  }, []);
+
+  const handleOpenEdit = useCallback(() => {
+    setInfoDrawerOpen(false);
+    setDuplicatesDrawerOpen(false);
+    setImportDupDrawerOpen(false);
+    setCompareMode(false);
+    setEditDrawerOpen(true);
+  }, []);
 
   useEffect(() => {
     if (!editDrawerOpen) return;
@@ -697,28 +716,63 @@ export default function PhotoViewer({
 
   if (!currentPhoto) return null;
 
-  return (
-    <div ref={viewerRef} className={styles.viewer}>
-      <div className={styles['viewer-toolbar']}>
-        <div className={styles['close-button']}>
-          <Button
-            color="muted"
-            variant="ghost"
-            onClick={onClose}
-            icon={<ArrowLeft />}
-            size="xl"
-          />
-        </div>
+  const viewerClassName = [
+    styles.viewer,
+    isEditing ? styles.viewerEditing : '',
+    isEditing && isMobile ? styles.viewerEditingMobile : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
-        <div className={styles['options-buttons']}>
-          <Button
-            color={compareMode ? 'primary' : 'muted'}
-            variant="ghost"
-            onClick={toggleCompareMode}
-            icon={<Columns2 />}
-            size="xl"
-            aria-label={compareMode ? 'Закрыть сравнение' : 'Сравнение'}
-          />
+  const stageClassName = [
+    compareMode ? `${styles.stage} ${styles.stageCompare}` : styles.stage,
+    isEditing && isMobile ? styles.stageEditingMobile : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const toolbarClassName = [
+    styles['viewer-toolbar'],
+    isEditing ? styles['viewer-toolbar-editing'] : '',
+    isEditing && isMobile ? styles['viewer-toolbar-editing-mobile'] : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <div ref={viewerRef} className={viewerClassName}>
+      <div className={toolbarClassName}>
+        {!isEditing ? (
+          <div className={styles['close-button']}>
+            <Button
+              color="muted"
+              variant="ghost"
+              onClick={onClose}
+              icon={<ArrowLeft />}
+              size="xl"
+            />
+          </div>
+        ) : (
+          <div className={styles['close-button']} aria-hidden="true" />
+        )}
+
+        <div
+          className={
+            isEditing
+              ? `${styles['options-buttons']} ${styles['options-buttons-zoom-only']}`
+              : styles['options-buttons']
+          }
+        >
+          {!isEditing ? (
+            <Button
+              color={compareMode ? 'primary' : 'muted'}
+              variant="ghost"
+              onClick={toggleCompareMode}
+              icon={<Columns2 />}
+              size="xl"
+              aria-label={compareMode ? 'Закрыть сравнение' : 'Сравнение'}
+            />
+          ) : null}
           <Button
             color="muted"
             variant="ghost"
@@ -743,60 +797,59 @@ export default function PhotoViewer({
             size="xl"
             aria-label="Сбросить масштаб"
           />
-          <Button
-            color="muted"
-            variant="ghost"
-            onClick={() => {
-              setEditDrawerOpen(false);
-              setDuplicatesDrawerOpen(false);
-              setImportDupDrawerOpen(false);
-              setInfoDrawerOpen(true);
-            }}
-            icon={<Info />}
-            size="xl"
-            aria-label="Информация"
-          />
-          {importDuplicateSourcesReview ? (
-            <Button
-              color="muted"
-              variant="ghost"
-              onClick={() => {
-                setInfoDrawerOpen(false);
-                setEditDrawerOpen(false);
-                setDuplicatesDrawerOpen(false);
-                setImportDupDrawerOpen(true);
-              }}
-              icon={<Copy />}
-              size="xl"
-              aria-label="Кандидаты в дубликаты"
-            />
-          ) : showDuplicatesEntry && duplicateBatchId ? (
-            <Button
-              color="muted"
-              variant="ghost"
-              onClick={() => {
-                setInfoDrawerOpen(false);
-                setEditDrawerOpen(false);
-                setDuplicatesDrawerOpen(true);
-              }}
-              icon={<Copy />}
-              size="xl"
-              aria-label="Дубликаты и похожие"
-            />
+          {!isEditing ? (
+            <>
+              <Button
+                color="muted"
+                variant="ghost"
+                onClick={() => {
+                  setEditDrawerOpen(false);
+                  setDuplicatesDrawerOpen(false);
+                  setImportDupDrawerOpen(false);
+                  setInfoDrawerOpen(true);
+                }}
+                icon={<Info />}
+                size="xl"
+                aria-label="Информация"
+              />
+              {importDuplicateSourcesReview ? (
+                <Button
+                  color="muted"
+                  variant="ghost"
+                  onClick={() => {
+                    setInfoDrawerOpen(false);
+                    setEditDrawerOpen(false);
+                    setDuplicatesDrawerOpen(false);
+                    setImportDupDrawerOpen(true);
+                  }}
+                  icon={<Copy />}
+                  size="xl"
+                  aria-label="Кандидаты в дубликаты"
+                />
+              ) : showDuplicatesEntry && duplicateBatchId ? (
+                <Button
+                  color="muted"
+                  variant="ghost"
+                  onClick={() => {
+                    setInfoDrawerOpen(false);
+                    setEditDrawerOpen(false);
+                    setDuplicatesDrawerOpen(true);
+                  }}
+                  icon={<Copy />}
+                  size="xl"
+                  aria-label="Дубликаты и похожие"
+                />
+              ) : null}
+              <Button
+                color="muted"
+                variant="ghost"
+                onClick={handleOpenEdit}
+                icon={<SlidersHorizontal />}
+                size="xl"
+                aria-label="Редактирование"
+              />
+            </>
           ) : null}
-          <Button
-            color="muted"
-            variant="ghost"
-            onClick={() => {
-              setInfoDrawerOpen(false);
-              setDuplicatesDrawerOpen(false);
-              setImportDupDrawerOpen(false);
-              setEditDrawerOpen(true);
-            }}
-            icon={<SlidersHorizontal />}
-            size="xl"
-            aria-label="Редактирование"
-          />
         </div>
 
         <Drawer
@@ -969,8 +1022,8 @@ export default function PhotoViewer({
         <Drawer
           behavior="move"
           title="Редактирование"
-          open={editDrawerOpen}
-          onClose={() => setEditDrawerOpen(false)}
+          open={isEditing && !isMobile}
+          onClose={handleCancelEdit}
           side="right"
           portalTarget={viewerRef.current}
           adjustContainerPadding={false}
@@ -1011,9 +1064,20 @@ export default function PhotoViewer({
         ) : null}
       </div>
 
+      {isEditing && isMobile ? (
+        <PhotoEditMobileOverlay
+          recipe={draftRecipe}
+          onRecipeChange={setDraftRecipe}
+          onCancel={handleCancelEdit}
+          onApply={handleApplyEdit}
+          applying={applyingVersion}
+          disabled={!currentViewer?.version}
+        />
+      ) : null}
+
       <div
         ref={stageRef}
-        className={compareMode ? `${styles.stage} ${styles.stageCompare}` : styles.stage}
+        className={stageClassName}
       >
         {compareMode ? (
           <PhotoCompareStage
@@ -1117,7 +1181,7 @@ export default function PhotoViewer({
         )}
 
         {!compareMode &&
-          !editDrawerOpen &&
+          !isEditing &&
           !viewportApi.isZoomed &&
           faceBoxes.length > 0 && (
           <div className={styles.overlay} aria-hidden="true">
@@ -1153,37 +1217,43 @@ export default function PhotoViewer({
           </div>
         )}
 
-        <div className={styles['prev-button']}>
-          <Button
-            size="xl"
-            color="muted"
-            variant="ghost"
-            onClick={handlePrevious}
-            icon={<ChevronLeft />}
-          />
-        </div>
+        {!isEditing ? (
+          <>
+            <div className={styles['prev-button']}>
+              <Button
+                size="xl"
+                color="muted"
+                variant="ghost"
+                onClick={handlePrevious}
+                icon={<ChevronLeft />}
+              />
+            </div>
 
-        <div className={styles['next-button']}>
-          <Button
-            size="xl"
-            color="muted"
-            variant="ghost"
-            onClick={handleNext}
-            icon={<ChevronRight />}
-          />
-        </div>
+            <div className={styles['next-button']}>
+              <Button
+                size="xl"
+                color="muted"
+                variant="ghost"
+                onClick={handleNext}
+                icon={<ChevronRight />}
+              />
+            </div>
+          </>
+        ) : null}
       </div>
 
-      <div className={styles.footer}>
-        <PhotoCarousel
-          photos={photos}
-          currentIndex={currentIndex}
-          onSelect={handleSelect}
-          compareMode={compareMode}
-          compareAssetId={compareAssetId}
-          onCompareSelect={handleCarouselCompareSelect}
-        />
-      </div>
+      {!isEditing ? (
+        <div className={styles.footer}>
+          <PhotoCarousel
+            photos={photos}
+            currentIndex={currentIndex}
+            onSelect={handleSelect}
+            compareMode={compareMode}
+            compareAssetId={compareAssetId}
+            onCompareSelect={handleCarouselCompareSelect}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

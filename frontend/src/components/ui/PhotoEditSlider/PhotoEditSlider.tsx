@@ -10,12 +10,19 @@ interface PhotoEditSliderProps {
   defaultValue?: number;
   unit?: string;
   disabled?: boolean;
+  variant?: 'default' | 'compact';
   onChange: (value: number) => void;
 }
 
 function formatValue(value: number, unit: string | undefined): string {
   const rounded = Math.round(value * 100) / 100;
-  return unit ? `${rounded}${unit}` : String(rounded);
+  if (unit === '°') {
+    const prefix = rounded > 0 ? '+' : '';
+    return `${prefix}${rounded}${unit}`;
+  }
+  if (unit) return `${rounded}${unit}`;
+  const prefix = rounded > 0 ? '+' : '';
+  return `${prefix}${rounded}`;
 }
 
 export default function PhotoEditSlider({
@@ -27,6 +34,7 @@ export default function PhotoEditSlider({
   defaultValue = 0,
   unit,
   disabled = false,
+  variant = 'default',
   onChange,
 }: PhotoEditSliderProps) {
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -34,29 +42,34 @@ export default function PhotoEditSlider({
   };
 
   const canReset = !disabled && value !== defaultValue;
+  const isCompact = variant === 'compact';
 
   return (
-    <div className={styles.root}>
+    <div
+      className={`${styles.root} ${isCompact ? styles.rootCompact : ''}`}
+    >
       <div className={styles.header}>
         <div className={styles.copy}>
           <span className={styles.label}>{label}</span>
           <span className={styles.value}>{formatValue(value, unit)}</span>
         </div>
 
-        <Button
-          color="muted"
-          variant="ghost"
-          size="sm"
-          disabled={!canReset}
-          onClick={() => onChange(defaultValue)}
-        >
-          Сброс
-        </Button>
+        {!isCompact ? (
+          <Button
+            color="muted"
+            variant="ghost"
+            size="sm"
+            disabled={!canReset}
+            onClick={() => onChange(defaultValue)}
+          >
+            Сброс
+          </Button>
+        ) : null}
       </div>
 
       <input
         type="range"
-        className={styles.slider}
+        className={`${styles.slider} ${isCompact ? styles.sliderCompact : ''}`}
         min={min}
         max={max}
         step={step}
@@ -65,11 +78,13 @@ export default function PhotoEditSlider({
         onChange={handleChange}
       />
 
-      <div className={styles.scale}>
-        <span>{formatValue(min, unit)}</span>
-        <span>{formatValue(defaultValue, unit)}</span>
-        <span>{formatValue(max, unit)}</span>
-      </div>
+      {!isCompact ? (
+        <div className={styles.scale}>
+          <span>{formatValue(min, unit)}</span>
+          <span>{formatValue(defaultValue, unit)}</span>
+          <span>{formatValue(max, unit)}</span>
+        </div>
+      ) : null}
     </div>
   );
 }

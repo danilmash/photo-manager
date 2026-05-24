@@ -48,6 +48,14 @@ from app.assets.tasks import process_asset_ml, process_asset_preview
 from app.config import settings
 from app.database import get_db
 from app.faces.models import FaceCandidate, FaceDetection, FaceIdentity
+from app.folders.models import Folder, FolderAsset
+from app.folders.schemas import AssetFoldersResponseSchema, AssetFoldersUpdateRequest
+from app.folders.service import (
+    build_folder_summary,
+    list_asset_folders,
+    require_folder,
+    require_owned_asset,
+)
 from app.import_batches.models import (
     IMPORT_BATCH_STATUS_PENDING_REVIEW,
     IMPORT_BATCH_STATUS_PROCESSING,
@@ -492,6 +500,7 @@ def list_assets(
     limit: int = 50,
     cursor: str | None = None,
     batch_id: uuid_mod.UUID | None = None,
+    folder_id: uuid_mod.UUID | None = None,
     lifecycle: Literal["active", "trashed", "all"] = Query(default="active"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -506,6 +515,11 @@ def list_assets(
     q = q.order_by(Asset.created_at.desc(), Asset.id.desc())
     if batch_id is not None:
         q = q.filter(Asset.import_batch_id == batch_id)
+    if folder_id is not None:
+        require_folder(db, folder_id, current_user)
+        q = q.join(FolderAsset, FolderAsset.asset_id == Asset.id).filter(
+            FolderAsset.folder_id == folder_id,
+        )
 
     if cursor:
         try:
@@ -570,6 +584,7 @@ def search_assets_semantic(
     q: str = Query(..., min_length=1),
     limit: int = 50,
     max_distance: float = Query(default=0.85, ge=0.0, le=2.0),
+    folder_id: uuid_mod.UUID | None = None,
     lifecycle: Literal["active", "trashed", "all"] = Query(default="active"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -618,6 +633,11 @@ def search_assets_semantic(
         rows = rows.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
     elif lifecycle == "trashed":
         rows = rows.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_TRASHED)
+    if folder_id is not None:
+        require_folder(db, folder_id, current_user)
+        rows = rows.join(FolderAsset, FolderAsset.asset_id == Asset.id).filter(
+            FolderAsset.folder_id == folder_id,
+        )
 
     rows = rows.order_by(distance.asc(), Asset.created_at.desc()).limit(limit).all()
     versions = [version for _, version in rows]
@@ -1046,6 +1066,106 @@ def trash_asset(
         lifecycle_status=asset.lifecycle_status,
         trashed_at=asset.trashed_at,
     )
+
+
+@router.get("/{asset_id}/folders", response_model=AssetFoldersResponseSchema)
+def get_asset_folders(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    folders = list_asset_folders(db, asset_id, current_user)
+    return AssetFoldersResponseSchema(asset_id=asset_id, folders=folders)
+
+
+@router.put("/{asset_id}/folders", response_model=AssetFoldersResponseSchema)
+def set_asset_folders(
+    asset_id: uuid_mod.UUID,
+    body: AssetFoldersUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = require_owned_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
+
+    unique_folder_ids = list(dict.fromkeys(body.folder_ids))
+    if unique_folder_ids:
+        owned_count = (
+            db.query(Folder)
+            .filter(
+                Folder.owner_id == current_user.id,
+                Folder.id.in_(unique_folder_ids),
+            )
+            .count()
+        )
+        if owned_count != len(unique_folder_ids):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Одна или несколько папок не найдены",
+            )
+
+    db.query(FolderAsset).filter(FolderAsset.asset_id == asset_id).delete(
+        synchronize_session=False,
+    )
+    for folder_id in unique_folder_ids:
+        db.add(FolderAsset(folder_id=folder_id, asset_id=asset_id))
+    db.commit()
+    folders = list_asset_folders(db, asset_id, current_user)
+    return AssetFoldersResponseSchema(asset_id=asset_id, folders=folders)
+
+
+@router.post(
+    "/{asset_id}/folders/{folder_id}",
+    response_model=AssetFoldersResponseSchema,
+    status_code=status.HTTP_200_OK,
+)
+def add_asset_to_folder(
+    asset_id: uuid_mod.UUID,
+    folder_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = require_owned_asset(db, asset_id, current_user)
+    _require_active_lifecycle(asset)
+    require_folder(db, folder_id, current_user)
+
+    existing = (
+        db.query(FolderAsset)
+        .filter(
+            FolderAsset.asset_id == asset_id,
+            FolderAsset.folder_id == folder_id,
+        )
+        .first()
+    )
+    if not existing:
+        db.add(FolderAsset(folder_id=folder_id, asset_id=asset_id))
+        db.commit()
+
+    folders = list_asset_folders(db, asset_id, current_user)
+    return AssetFoldersResponseSchema(asset_id=asset_id, folders=folders)
+
+
+@router.delete(
+    "/{asset_id}/folders/{folder_id}",
+    response_model=AssetFoldersResponseSchema,
+)
+def remove_asset_from_folder(
+    asset_id: uuid_mod.UUID,
+    folder_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_owned_asset(db, asset_id, current_user)
+    require_folder(db, folder_id, current_user)
+
+    db.query(FolderAsset).filter(
+        FolderAsset.asset_id == asset_id,
+        FolderAsset.folder_id == folder_id,
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    folders = list_asset_folders(db, asset_id, current_user)
+    return AssetFoldersResponseSchema(asset_id=asset_id, folders=folders)
 
 
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)

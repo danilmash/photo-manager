@@ -85,12 +85,14 @@ export async function listAssets(params?: {
   limit?: number;
   cursor?: string | null;
   batchId?: string | null;
+  folderId?: string | null;
 }): Promise<AssetListResponse> {
   const { data } = await api.get<AssetListResponse>('/assets', {
     params: {
       limit: params?.limit,
       cursor: params?.cursor ?? undefined,
       batch_id: params?.batchId ?? undefined,
+      folder_id: params?.folderId ?? undefined,
     },
   });
   return data;
@@ -100,12 +102,14 @@ export async function searchAssetsSemantic(params: {
   query: string;
   limit?: number;
   maxDistance?: number;
+  folderId?: string | null;
 }): Promise<AssetListResponse> {
   const { data } = await api.get<AssetListResponse>('/assets/search/semantic', {
     params: {
       q: params.query,
       limit: params.limit,
       max_distance: params.maxDistance,
+      folder_id: params.folderId ?? undefined,
     },
   });
   return data;

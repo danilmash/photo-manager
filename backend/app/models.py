@@ -3,3 +3,4 @@ import app.users.models
 import app.projects.models
 import app.import_batches.models
 import app.assets.models
+import app.folders.models

@@ -13,6 +13,7 @@ export default function App() {
         <Route path="login" element={<LoginPage />} />
         <Route element={<Layout />}>
           <Route index element={<HomePage />} />
+          <Route path="folders/:folderId" element={<HomePage />} />
           <Route path="import" element={<ImportPage />} />
           <Route path="import/:batchId" element={<ImportPage />} />
           <Route path="settings" element={<SettingsPage />} />

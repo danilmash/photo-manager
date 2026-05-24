@@ -9,6 +9,43 @@
   margin-top: 14px;
 }
 
+.main {
+  transition: padding-left 0.3s ease;
+}
+
+.page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.mainWithSidebar {
+  padding-left: 280px;
+}
+
+.introCopy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.menuBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-top: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .search-summary,
 .empty {
   margin-top: 10px;

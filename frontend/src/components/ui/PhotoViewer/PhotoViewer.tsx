@@ -43,6 +43,7 @@ import PhotoDuplicatesDrawer from './PhotoDuplicatesDrawer';
 import PhotoEditDrawer from './PhotoEditDrawer';
 import PhotoEditMobileOverlay from './PhotoEditMobileOverlay';
 import PhotoCompareStage from './PhotoCompareStage';
+import PhotoAssetFoldersPanel from './PhotoAssetFoldersPanel';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../../hooks/useMediaQuery';
 import ZoomableImageStage from './ZoomableImageStage';
 import { renderMagickPreviewUrl } from './magickPreview';
@@ -56,6 +57,7 @@ interface PhotoViewerProps {
   onNext: () => void;
   onSelect: (index: number) => void;
   onClose: () => void;
+  onFoldersChanged?: () => void;
   /**
    * Режим импорта: карусель — все источники дубликатов в партии; кандидаты и вердикты — в дровере.
    */
@@ -150,6 +152,7 @@ export default function PhotoViewer({
   onNext,
   onSelect,
   onClose,
+  onFoldersChanged,
   importDuplicateSourcesReview,
 }: PhotoViewerProps) {
   const [direction, setDirection] = useState<Direction>(1);
@@ -1009,6 +1012,15 @@ export default function PhotoViewer({
                       </div>
                     ) : null}
                   </form>
+                </section>
+
+                <section style={{ display: 'grid', gap: 10 }}>
+                  <h3 style={{ margin: 0, fontSize: 16 }}>Папки</h3>
+                  <PhotoAssetFoldersPanel
+                    assetId={currentViewer.id}
+                    open={infoDrawerOpen}
+                    onChanged={onFoldersChanged}
+                  />
                 </section>
 
                 <section style={{ display: 'grid', gap: 10 }}>

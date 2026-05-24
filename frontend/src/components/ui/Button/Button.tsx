@@ -11,18 +11,19 @@ interface ButtonProps {
     onClick?: () => void;
     children?: React.ReactNode;
     type?: 'button' | 'submit' | 'reset';
+    className?: string;
 }
 
-export default function Button({ to, color = 'primary', size = 'm', variant = 'filled', icon, onClick, children, disabled, type = 'button' }: ButtonProps) {
-        const className = `${styles.button} ${styles[color]} ${styles[size]} ${styles[variant]} ${disabled ? styles.disabled : ''} ${icon && !children ? styles['only-icon'] : ''}`;
+export default function Button({ to, color = 'primary', size = 'm', variant = 'filled', icon, onClick, children, disabled, type = 'button', className }: ButtonProps) {
+        const classNameResolved = `${styles.button} ${styles[color]} ${styles[size]} ${styles[variant]} ${disabled ? styles.disabled : ''} ${icon && !children ? styles['only-icon'] : ''}${className ? ` ${className}` : ''}`;
     return (
         to ? (
-            <Link to={to} className={className} onClick={onClick}>
+            <Link to={to} className={classNameResolved} onClick={onClick}>
                 {children}
                 {icon && <span className={styles.icon}>{icon}</span>}
             </Link>
         ) : (
-            <button className={className} onClick={onClick} disabled={disabled} type={type}>
+            <button className={classNameResolved} onClick={onClick} disabled={disabled} type={type}>
                 {children}
                 {icon && <span className={styles.icon}>{icon}</span>}
             </button>

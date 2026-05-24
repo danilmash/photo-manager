@@ -13,6 +13,7 @@ import {
 import styles from './PhotoEditMobileOverlay.module.css';
 
 export interface PhotoEditMobileOverlayProps {
+  className?: string;
   recipe: PhotoRecipe;
   onRecipeChange: (recipe: PhotoRecipe) => void;
   onCancel: () => void;
@@ -22,6 +23,7 @@ export interface PhotoEditMobileOverlayProps {
 }
 
 export default function PhotoEditMobileOverlay({
+  className,
   recipe,
   onRecipeChange,
   onCancel,
@@ -76,7 +78,7 @@ export default function PhotoEditMobileOverlay({
   }, [activeControl, locked, onRecipeChange, recipe]);
 
   return (
-    <div className={styles.root}>
+    <div className={[styles.root, className].filter(Boolean).join(' ')}>
       <header className={styles.header}>
         <button
           type="button"
@@ -119,7 +121,7 @@ export default function PhotoEditMobileOverlay({
                 <Button
                   color="muted"
                   variant="ghost"
-                  size="sm"
+                  size="l"
                   disabled={locked}
                   onClick={handlePreviousControl}
                   icon={<ChevronLeft />}
@@ -129,7 +131,7 @@ export default function PhotoEditMobileOverlay({
                 <Button
                   color="muted"
                   variant="ghost"
-                  size="sm"
+                  size="l"
                   disabled={locked}
                   onClick={handleNextControl}
                   icon={<ChevronRight />}

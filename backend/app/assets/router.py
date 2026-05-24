@@ -543,6 +543,9 @@ def list_assets(
                 updated_at=asset.updated_at,
                 lifecycle_status=asset.lifecycle_status,
                 trashed_at=asset.trashed_at,
+                import_batch_id=asset.import_batch_id,
+                duplicate_review_status=asset.duplicate_review_status,
+                duplicate_of_asset_id=asset.duplicate_of_asset_id,
                 version=(
                     _build_version_summary(
                         version,
@@ -628,6 +631,9 @@ def search_assets_semantic(
             updated_at=asset.updated_at,
             lifecycle_status=asset.lifecycle_status,
             trashed_at=asset.trashed_at,
+            import_batch_id=asset.import_batch_id,
+            duplicate_review_status=asset.duplicate_review_status,
+            duplicate_of_asset_id=asset.duplicate_of_asset_id,
             version=_build_version_summary(
                 version,
                 version_files.get(version.id, {}),

@@ -77,29 +77,8 @@
     padding: 12px 24px;
 }
 
-.viewerEditing .footer {
-    display: none;
-}
-
 .viewer-toolbar-editing {
     margin-bottom: -80px;
-}
-
-.viewer-toolbar-editing-mobile {
-    position: absolute;
-    top: 50%;
-    right: 0;
-    left: auto;
-    transform: translateY(-50%);
-    margin-bottom: 0;
-    padding: 12px 8px;
-    z-index: 130;
-    pointer-events: none;
-}
-
-.viewer-toolbar-editing-mobile .options-buttons-zoom-only {
-    pointer-events: auto;
-    flex-direction: column;
 }
 
 .options-buttons {
@@ -108,26 +87,43 @@
     gap: 4px;
 }
 
-.options-buttons-zoom-only {
-    justify-content: flex-end;
+/* Кнопки поверх фото — читаемы на любом фоне и в light/dark теме */
+.chrome-button {
+    color: rgba(255, 255, 255, 0.94) !important;
+    background: rgba(15, 15, 15, 0.58) !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+    backdrop-filter: blur(10px);
+}
+
+.chrome-button:hover:not(:disabled) {
+    color: #fff !important;
+    background: rgba(15, 15, 15, 0.78) !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+}
+
+.chrome-button-active {
+    color: #fff !important;
+    background: rgba(11, 111, 203, 0.9) !important;
+    border-color: rgba(11, 111, 203, 0.95) !important;
+    backdrop-filter: blur(10px);
+}
+
+.chrome-button-active:hover:not(:disabled) {
+    color: #fff !important;
+    background: rgba(13, 93, 168, 0.95) !important;
+    border-color: rgba(13, 93, 168, 1) !important;
 }
 
 .stageEditingMobile {
     padding-bottom: 240px;
 }
 
-@media (max-width: 768px) {
-    .viewer-toolbar-editing-mobile {
-        width: auto;
-    }
-
-    .stageEditingMobile {
-        padding-bottom: min(42vh, 280px);
-    }
-}
-
 .footer {
     flex: 0 0 auto;
+}
+
+.zoom-bar {
+    display: none;
 }
 
 .prev-button {
@@ -213,4 +209,71 @@
 .face-label-active {
     background: var(--color-accent);
     color: var(--color-text-inverse);
+}
+
+@media (max-width: 768px) {
+    .viewer-toolbar {
+        padding: 12px 10px;
+        gap: 6px;
+    }
+
+    .close-button,
+    .options-buttons > * {
+        flex-shrink: 0;
+    }
+
+    .options-buttons {
+        gap: 2px;
+        justify-content: flex-end;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .viewer-toolbar button,
+    .viewer-toolbar a {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: var(--font-size-2xl);
+    }
+
+    .viewer-toolbar button svg,
+    .viewer-toolbar a svg {
+        width: 24px !important;
+        height: 24px !important;
+    }
+
+    .footer {
+        position: relative;
+        z-index: 131;
+    }
+
+    .zoom-bar {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 12px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(15, 15, 15, 0.82);
+        backdrop-filter: blur(12px);
+    }
+
+    .zoom-bar button {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: var(--font-size-2xl);
+    }
+
+    .zoom-bar button svg {
+        width: 24px !important;
+        height: 24px !important;
+    }
+
+    .mobile-edit-overlay {
+        bottom: 52px;
+    }
+
+    .stageEditingMobile {
+        padding-bottom: min(42vh, 280px);
+    }
 }

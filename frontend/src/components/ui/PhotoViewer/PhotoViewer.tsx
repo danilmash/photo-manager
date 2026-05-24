@@ -332,9 +332,12 @@ export default function PhotoViewer({
     return importDuplicateSourcesReview.groups[currentIndex] ?? null;
   }, [importDuplicateSourcesReview, currentIndex]);
 
-  const duplicateBatchId = currentViewer?.import_batch_id ?? null;
-  const duplicateReviewStatus = currentViewer?.duplicate_review_status ?? null;
-  const duplicateOfId = currentViewer?.duplicate_of_asset_id ?? null;
+  const duplicateBatchId =
+    currentViewer?.import_batch_id ?? currentPhoto?.import_batch_id ?? null;
+  const duplicateReviewStatus =
+    currentViewer?.duplicate_review_status ?? currentPhoto?.duplicate_review_status ?? null;
+  const duplicateOfId =
+    currentViewer?.duplicate_of_asset_id ?? currentPhoto?.duplicate_of_asset_id ?? null;
   const showDuplicatesEntry =
     !importDuplicateSourcesReview &&
     Boolean(duplicateBatchId) &&
@@ -716,6 +719,41 @@ export default function PhotoViewer({
 
   if (!currentPhoto) return null;
 
+  const chromeButtonClass = styles['chrome-button'];
+  const chromeButtonActiveClass = styles['chrome-button-active'];
+
+  const zoomButtons = (
+    <>
+      <Button
+        color="muted"
+        variant="ghost"
+        className={chromeButtonClass}
+        onClick={viewportApi.zoomIn}
+        icon={<ZoomIn />}
+        size="xl"
+        aria-label="Приблизить"
+      />
+      <Button
+        color="muted"
+        variant="ghost"
+        className={chromeButtonClass}
+        onClick={viewportApi.zoomOut}
+        icon={<ZoomOut />}
+        size="xl"
+        aria-label="Отдалить"
+      />
+      <Button
+        color="muted"
+        variant="ghost"
+        className={chromeButtonClass}
+        onClick={viewportApi.reset}
+        icon={<Maximize2 />}
+        size="xl"
+        aria-label="Сбросить масштаб"
+      />
+    </>
+  );
+
   const viewerClassName = [
     styles.viewer,
     isEditing ? styles.viewerEditing : '',
@@ -733,20 +771,21 @@ export default function PhotoViewer({
 
   const toolbarClassName = [
     styles['viewer-toolbar'],
-    isEditing ? styles['viewer-toolbar-editing'] : '',
-    isEditing && isMobile ? styles['viewer-toolbar-editing-mobile'] : '',
+    isEditing && !isMobile ? styles['viewer-toolbar-editing'] : '',
   ]
     .filter(Boolean)
     .join(' ');
 
   return (
     <div ref={viewerRef} className={viewerClassName}>
+      {!(isEditing && isMobile) ? (
       <div className={toolbarClassName}>
         {!isEditing ? (
           <div className={styles['close-button']}>
             <Button
               color="muted"
               variant="ghost"
+              className={chromeButtonClass}
               onClick={onClose}
               icon={<ArrowLeft />}
               size="xl"
@@ -756,52 +795,25 @@ export default function PhotoViewer({
           <div className={styles['close-button']} aria-hidden="true" />
         )}
 
-        <div
-          className={
-            isEditing
-              ? `${styles['options-buttons']} ${styles['options-buttons-zoom-only']}`
-              : styles['options-buttons']
-          }
-        >
+        <div className={styles['options-buttons']}>
           {!isEditing ? (
             <Button
-              color={compareMode ? 'primary' : 'muted'}
+              color="muted"
               variant="ghost"
+              className={compareMode ? chromeButtonActiveClass : chromeButtonClass}
               onClick={toggleCompareMode}
               icon={<Columns2 />}
               size="xl"
               aria-label={compareMode ? 'Закрыть сравнение' : 'Сравнение'}
             />
           ) : null}
-          <Button
-            color="muted"
-            variant="ghost"
-            onClick={viewportApi.zoomIn}
-            icon={<ZoomIn />}
-            size="xl"
-            aria-label="Приблизить"
-          />
-          <Button
-            color="muted"
-            variant="ghost"
-            onClick={viewportApi.zoomOut}
-            icon={<ZoomOut />}
-            size="xl"
-            aria-label="Отдалить"
-          />
-          <Button
-            color="muted"
-            variant="ghost"
-            onClick={viewportApi.reset}
-            icon={<Maximize2 />}
-            size="xl"
-            aria-label="Сбросить масштаб"
-          />
+          {!isMobile ? zoomButtons : null}
           {!isEditing ? (
             <>
               <Button
                 color="muted"
                 variant="ghost"
+                className={chromeButtonClass}
                 onClick={() => {
                   setEditDrawerOpen(false);
                   setDuplicatesDrawerOpen(false);
@@ -816,6 +828,7 @@ export default function PhotoViewer({
                 <Button
                   color="muted"
                   variant="ghost"
+                  className={chromeButtonClass}
                   onClick={() => {
                     setInfoDrawerOpen(false);
                     setEditDrawerOpen(false);
@@ -830,6 +843,7 @@ export default function PhotoViewer({
                 <Button
                   color="muted"
                   variant="ghost"
+                  className={chromeButtonClass}
                   onClick={() => {
                     setInfoDrawerOpen(false);
                     setEditDrawerOpen(false);
@@ -843,6 +857,7 @@ export default function PhotoViewer({
               <Button
                 color="muted"
                 variant="ghost"
+                className={chromeButtonClass}
                 onClick={handleOpenEdit}
                 icon={<SlidersHorizontal />}
                 size="xl"
@@ -1063,9 +1078,11 @@ export default function PhotoViewer({
           />
         ) : null}
       </div>
+      ) : null}
 
       {isEditing && isMobile ? (
         <PhotoEditMobileOverlay
+          className={styles['mobile-edit-overlay']}
           recipe={draftRecipe}
           onRecipeChange={setDraftRecipe}
           onCancel={handleCancelEdit}
@@ -1242,16 +1259,21 @@ export default function PhotoViewer({
         ) : null}
       </div>
 
-      {!isEditing ? (
+      {isMobile || !isEditing ? (
         <div className={styles.footer}>
-          <PhotoCarousel
-            photos={photos}
-            currentIndex={currentIndex}
-            onSelect={handleSelect}
-            compareMode={compareMode}
-            compareAssetId={compareAssetId}
-            onCompareSelect={handleCarouselCompareSelect}
-          />
+          {isMobile ? (
+            <div className={styles['zoom-bar']}>{zoomButtons}</div>
+          ) : null}
+          {!isEditing ? (
+            <PhotoCarousel
+              photos={photos}
+              currentIndex={currentIndex}
+              onSelect={handleSelect}
+              compareMode={compareMode}
+              compareAssetId={compareAssetId}
+              onCompareSelect={handleCarouselCompareSelect}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

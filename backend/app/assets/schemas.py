@@ -107,6 +107,9 @@ class AssetListItemSchema(BaseModel):
     updated_at: datetime
     lifecycle_status: str
     trashed_at: datetime | None = None
+    import_batch_id: UUID | None = None
+    duplicate_review_status: str | None = None
+    duplicate_of_asset_id: UUID | None = None
     version: AssetVersionSummarySchema | None
 
 

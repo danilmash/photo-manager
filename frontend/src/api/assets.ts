@@ -69,6 +69,9 @@ export interface AssetListItem {
   title: string | null;
   created_at: string;
   updated_at: string;
+  import_batch_id?: string | null;
+  duplicate_review_status?: string | null;
+  duplicate_of_asset_id?: string | null;
   /** Последняя версия по version_number; после загрузки обычно не null */
   version: AssetVersionSummary | null;
 }

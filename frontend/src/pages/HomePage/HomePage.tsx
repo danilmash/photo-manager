@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Menu, Upload } from 'lucide-react';
+import { Download, Menu, Upload, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import pageLayout from '../../styles/page-layout.module.css';
 import styles from './HomePage.module.css';
@@ -17,6 +17,9 @@ import PersonsStrip from '../../components/ui/PersonsStrip';
 import SemanticSearchInput from '../../components/ui/SemanticSearchInput';
 import FoldersSidebar from '../../components/features/library/FoldersSidebar/FoldersSidebar';
 import FolderNameModal from '../../components/features/library/FolderNameModal/FolderNameModal';
+import ExportProgressDrawer from '../../components/features/library/ExportProgressDrawer';
+import { useExportStore } from '../../stores/useExportStore';
+import { useGallerySelection } from '../../hooks/useGallerySelection';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 
 /** Миниатюра уже есть после фазы preview; общий status может быть processing (ML). */
@@ -61,6 +64,8 @@ export default function HomePage() {
   const [folderModal, setFolderModal] = useState<FolderModalMode | null>(null);
   const [folderModalError, setFolderModalError] = useState<string | null>(null);
   const [folderModalSubmitting, setFolderModalSubmitting] = useState(false);
+
+  const startExport = useExportStore((s) => s.startExport);
 
   const activeFolder = useMemo(
     () => folders.find((folder) => folder.id === routeFolderId) ?? null,
@@ -167,8 +172,52 @@ export default function HomePage() {
       setSelectedAssetId(null);
     }
   }, [fetchFolders, folderId, loadInitial, selectedAssetId]);
+
+  const selectableAssetIds = useMemo(
+    () => tiles.filter((item) => canShowLibraryThumb(item)).map((item) => item.asset_id),
+    [tiles],
+  );
+
+  const openAsset = useCallback((assetId: string) => {
+    setSelectedAssetId(assetId);
+  }, []);
+
+  const {
+    selectionActive,
+    selectedIds: selectedAssetIds,
+    selectedCount,
+    allLoadedSelected,
+    isScrubbing,
+    exitSelection,
+    selectAllLoaded,
+    clearSelection,
+    getTileHandlers,
+  } = useGallerySelection({
+    selectableIds: selectableAssetIds,
+    onOpenAsset: openAsset,
+  });
+
+  const handleExportSelected = useCallback(async () => {
+    const assetIds = Array.from(selectedAssetIds);
+    if (assetIds.length === 0) return;
+
+    if (assetIds.length > 50) {
+      const confirmed = window.confirm(
+        `Экспорт ${assetIds.length} файлов может занять несколько минут. Продолжить?`,
+      );
+      if (!confirmed) return;
+    }
+
+    await startExport(assetIds);
+    exitSelection();
+  }, [exitSelection, selectedAssetIds, startExport]);
+
   const pageTitle = activeFolder ? activeFolder.name : 'Фото';
-  const pageSubtitle = activeFolder ? 'Папка' : 'Общая библиотека';
+  const pageSubtitle = selectionActive
+    ? 'Удерживайте и проведите по фото для выбора'
+    : activeFolder
+      ? 'Папка'
+      : 'Общая библиотека';
 
   return (
     <>
@@ -192,7 +241,7 @@ export default function HomePage() {
       />
 
       <div
-        className={`${styles.main} ${sidebarOpen && !isMobile ? styles.mainWithSidebar : ''}`}
+        className={`${styles.main} ${sidebarOpen && !isMobile ? styles.mainWithSidebar : ''} ${selectionActive ? styles.mainSelecting : ''}`}
       >
         <div className={`${pageLayout.page} ${styles.page}`}>
           <section className={pageLayout['page-intro']} aria-labelledby="home-page-title">
@@ -210,7 +259,7 @@ export default function HomePage() {
                 ) : null}
                 <div>
                   <h1 id="home-page-title" className={pageLayout.title}>
-                    {pageTitle}
+                    {selectionActive ? `Выбрано: ${selectedCount}` : pageTitle}
                   </h1>
                   <p className={pageLayout.subtitle}>{pageSubtitle}</p>
                 </div>
@@ -258,21 +307,41 @@ export default function HomePage() {
           )}
 
           {hasItems && (
-            <div className={styles.grid}>
+            <div
+              className={`${styles.grid} ${selectionActive ? styles.gridSelecting : ''} ${isScrubbing ? styles.gridScrubbing : ''}`}
+            >
               {tiles.map((item) => {
                 const showThumb = canShowLibraryThumb(item);
                 const canOpen = showThumb;
                 const photoBadge = resolvePhotoStateBadgeVariant(item);
+                const isSelected = selectedAssetIds.has(item.asset_id);
+                const tileHandlers = getTileHandlers(item.asset_id, canOpen);
                 return (
                   <button
                     key={item.asset_id}
                     type="button"
-                    className={styles['tile-btn']}
+                    data-asset-id={item.asset_id}
+                    className={`${styles['tile-btn']} ${selectionActive ? styles['tile-btn-selectable'] : ''} ${isSelected ? styles['tile-btn-selected'] : ''}`}
                     disabled={!canOpen}
-                    onClick={() => setSelectedAssetId(item.asset_id)}
-                    aria-label={item.title ? `Открыть: ${item.title}` : 'Открыть фото'}
+                    {...tileHandlers}
+                    aria-label={
+                      selectionActive
+                        ? isSelected
+                          ? 'Снять выбор'
+                          : 'Выбрать фото'
+                        : item.title
+                          ? `Открыть: ${item.title}`
+                          : 'Открыть фото'
+                    }
+                    aria-pressed={selectionActive ? isSelected : undefined}
                   >
                     <div className={styles.tile}>
+                      {selectionActive ? (
+                        <span
+                          className={`${styles.selectionMark} ${isSelected ? styles.selectionMarkActive : ''}`}
+                          aria-hidden="true"
+                        />
+                      ) : null}
                       {showThumb ? (
                         <>
                           <img
@@ -281,6 +350,7 @@ export default function HomePage() {
                             alt=""
                             loading="lazy"
                             decoding="async"
+                            draggable={false}
                           />
                           {item.version?.status !== 'ready' && photoBadge && (
                             <PhotoStateBadge
@@ -323,7 +393,7 @@ export default function HomePage() {
           <Modal
             dark
             variant="fullscreen"
-            isOpen={selectedIndex >= 0}
+            isOpen={!selectionActive && selectedIndex >= 0}
             onClose={() => setSelectedAssetId(null)}
           >
             <PhotoViewer
@@ -348,6 +418,49 @@ export default function HomePage() {
           </Modal>
         </div>
       </div>
+
+      {selectionActive ? (
+        <div className={styles.bulkBar} role="toolbar" aria-label="Действия с выбранными фото">
+          <div className={styles.bulkBarInfo}>
+            <strong>{selectedCount}</strong>
+            <span>{selectedCount === 1 ? 'фото' : 'фото'}</span>
+          </div>
+          <div className={styles.bulkBarActions}>
+            <button
+              type="button"
+              className={styles.bulkBarLink}
+              onClick={allLoadedSelected ? clearSelection : selectAllLoaded}
+              disabled={selectableAssetIds.length === 0}
+            >
+              {allLoadedSelected ? 'Снять выбор' : 'Выбрать все'}
+            </button>
+            <Button
+              color="primary"
+              variant="filled"
+              size="m"
+              icon={<Download />}
+              disabled={selectedCount === 0}
+              onClick={() => {
+                void handleExportSelected();
+              }}
+            >
+              Экспорт
+            </Button>
+            <Button
+              color="secondary"
+              variant="outline"
+              size="m"
+              icon={<X />}
+              onClick={exitSelection}
+              aria-label="Отменить выбор"
+            >
+              Готово
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <ExportProgressDrawer />
 
       <FolderNameModal
         isOpen={folderModal !== null}

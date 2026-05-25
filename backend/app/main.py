@@ -8,6 +8,7 @@ from app.assets.router import router as assets_router
 from app.faces.router import router as faces_router
 from app.import_batches.router import router as import_batches_router
 from app.folders.router import router as folders_router
+from app.exports.router import router as exports_router
 from app.users.models import User
 from app.users.security import hash_password
 
@@ -45,6 +46,7 @@ app.include_router(assets_router)
 app.include_router(faces_router)
 app.include_router(import_batches_router)
 app.include_router(folders_router)
+app.include_router(exports_router)
 
 
 @app.get("/")

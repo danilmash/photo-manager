@@ -8,6 +8,7 @@ interface SemanticSearchInputProps {
   isLoading?: boolean;
   placeholder?: string;
   className?: string;
+  autoFocus?: boolean;
   onSearch: (query: string) => void | Promise<void>;
   onClear: () => void | Promise<void>;
 }
@@ -17,6 +18,7 @@ export default function SemanticSearchInput({
   isLoading = false,
   placeholder = 'Умный поиск: собака, закат, машина...',
   className,
+  autoFocus = false,
   onSearch,
   onClear,
 }: SemanticSearchInputProps) {
@@ -37,6 +39,7 @@ export default function SemanticSearchInput({
       <input
         className={styles.input}
         value={draft}
+        autoFocus={autoFocus}
         onChange={(event) => setDraft(event.target.value)}
         placeholder={placeholder}
         aria-label="Умный поиск по фотографиям"

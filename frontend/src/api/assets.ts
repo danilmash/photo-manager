@@ -81,17 +81,58 @@ export interface AssetListResponse {
   next_cursor: string | null;
 }
 
+export interface AssetFilters {
+  tags?: string[];
+  takenFrom?: string;
+  takenTo?: string;
+  camera?: string;
+}
+
+export interface AssetTagsResponse {
+  items: string[];
+}
+
+function buildFilterParams(filters?: AssetFilters) {
+  if (!filters) return {};
+  const tags = filters.tags?.filter(Boolean) ?? [];
+  return {
+    tags: tags.length > 0 ? tags.join(',') : undefined,
+    taken_from: filters.takenFrom || undefined,
+    taken_to: filters.takenTo || undefined,
+    camera: filters.camera?.trim() || undefined,
+  };
+}
+
 export async function listAssets(params?: {
   limit?: number;
   cursor?: string | null;
   batchId?: string | null;
   folderId?: string | null;
+  personId?: string | null;
+  filters?: AssetFilters;
 }): Promise<AssetListResponse> {
   const { data } = await api.get<AssetListResponse>('/assets', {
     params: {
       limit: params?.limit,
       cursor: params?.cursor ?? undefined,
       batch_id: params?.batchId ?? undefined,
+      folder_id: params?.folderId ?? undefined,
+      person_id: params?.personId ?? undefined,
+      ...buildFilterParams(params?.filters),
+    },
+  });
+  return data;
+}
+
+export async function listAssetTags(params?: {
+  q?: string;
+  limit?: number;
+  folderId?: string | null;
+}): Promise<AssetTagsResponse> {
+  const { data } = await api.get<AssetTagsResponse>('/assets/tags', {
+    params: {
+      q: params?.q || undefined,
+      limit: params?.limit,
       folder_id: params?.folderId ?? undefined,
     },
   });

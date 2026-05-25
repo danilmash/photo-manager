@@ -124,6 +124,10 @@ class AssetListResponseSchema(BaseModel):
     next_cursor: str | None
 
 
+class AssetTagsListResponseSchema(BaseModel):
+    items: list[str]
+
+
 class AssetVersionHistoryResponseSchema(BaseModel):
     items: list[AssetVersionSummarySchema]
 

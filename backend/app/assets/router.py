@@ -2,7 +2,7 @@ import base64
 import re
 import shutil
 import uuid as uuid_mod
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -28,6 +28,7 @@ from app.assets.schemas import (
     AssetLifecycleResponseSchema,
     AssetListItemSchema,
     AssetListResponseSchema,
+    AssetTagsListResponseSchema,
     AssetMetadataResponseSchema,
     AssetMetadataSchema,
     AssetPhotoInfoSchema,
@@ -43,6 +44,8 @@ from app.assets.schemas import (
     AssetViewerResponseSchema,
     UploadResponseSchema,
 )
+from app.assets.metadata_filters import apply_metadata_filters, collect_distinct_tags
+from app.assets.person_filters import apply_person_filter
 from app.assets.ml_service import embed_text
 from app.assets.tasks import process_asset_ml, process_asset_preview
 from app.config import settings
@@ -290,6 +293,46 @@ def _normalize_keywords(value: Any) -> list[str]:
     return out
 
 
+def _parse_tags_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    tags: list[str] = []
+    seen: set[str] = set()
+    for part in value.split(","):
+        tag = _normalize_tag(part)
+        if tag is None:
+            continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        tags.append(tag)
+    return tags
+
+
+def _build_scoped_assets_query(
+    db: Session,
+    *,
+    lifecycle: Literal["active", "trashed", "all"],
+    batch_id: uuid_mod.UUID | None,
+    folder_id: uuid_mod.UUID | None,
+    current_user: User,
+):
+    q = db.query(Asset)
+    if lifecycle == "active":
+        q = q.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
+    elif lifecycle == "trashed":
+        q = q.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_TRASHED)
+    if batch_id is not None:
+        q = q.filter(Asset.import_batch_id == batch_id)
+    if folder_id is not None:
+        require_folder(db, folder_id, current_user)
+        q = q.join(FolderAsset, FolderAsset.asset_id == Asset.id).filter(
+            FolderAsset.folder_id == folder_id,
+        )
+    return q
+
+
 def _deep_get(data: dict[str, Any] | None, *paths: str) -> Any | None:
     if not isinstance(data, dict):
         return None
@@ -502,24 +545,36 @@ def list_assets(
     batch_id: uuid_mod.UUID | None = None,
     folder_id: uuid_mod.UUID | None = None,
     lifecycle: Literal["active", "trashed", "all"] = Query(default="active"),
+    tags: str | None = None,
+    taken_from: date | None = None,
+    taken_to: date | None = None,
+    camera: str | None = None,
+    person_id: uuid_mod.UUID | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     limit = max(1, min(limit, 200))
+    parsed_tags = _parse_tags_csv(tags)
+    camera_value = camera.strip() if camera else None
 
-    q = db.query(Asset)
-    if lifecycle == "active":
-        q = q.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
-    elif lifecycle == "trashed":
-        q = q.filter(Asset.lifecycle_status == ASSET_LIFECYCLE_TRASHED)
+    q = _build_scoped_assets_query(
+        db,
+        lifecycle=lifecycle,
+        batch_id=batch_id,
+        folder_id=folder_id,
+        current_user=current_user,
+    )
+    q = apply_metadata_filters(
+        db,
+        q,
+        tags=parsed_tags or None,
+        taken_from=taken_from,
+        taken_to=taken_to,
+        camera=camera_value,
+    )
+    if person_id is not None:
+        q = apply_person_filter(q, db, person_id=person_id)
     q = q.order_by(Asset.created_at.desc(), Asset.id.desc())
-    if batch_id is not None:
-        q = q.filter(Asset.import_batch_id == batch_id)
-    if folder_id is not None:
-        require_folder(db, folder_id, current_user)
-        q = q.join(FolderAsset, FolderAsset.asset_id == Asset.id).filter(
-            FolderAsset.folder_id == folder_id,
-        )
 
     if cursor:
         try:
@@ -577,6 +632,32 @@ def list_assets(
         next_cursor = _encode_cursor(last_row.created_at, last_row.id)
 
     return AssetListResponseSchema(items=items, next_cursor=next_cursor)
+
+
+@router.get("/tags", response_model=AssetTagsListResponseSchema)
+def list_asset_tags(
+    q: str | None = None,
+    limit: int = 20,
+    folder_id: uuid_mod.UUID | None = None,
+    lifecycle: Literal["active", "trashed", "all"] = Query(default="active"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    limit = max(1, min(limit, 100))
+    asset_query = _build_scoped_assets_query(
+        db,
+        lifecycle=lifecycle,
+        batch_id=None,
+        folder_id=folder_id,
+        current_user=current_user,
+    )
+    tags = collect_distinct_tags(
+        db,
+        asset_query=asset_query,
+        prefix=q,
+        limit=limit,
+    )
+    return AssetTagsListResponseSchema(items=tags)
 
 
 @router.get("/search/semantic", response_model=AssetListResponseSchema)

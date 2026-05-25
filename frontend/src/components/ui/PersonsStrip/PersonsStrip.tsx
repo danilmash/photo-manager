@@ -9,7 +9,15 @@ function displayName(name: string) {
   return t.length > 0 ? t : 'Без имени';
 }
 
-export default function PersonsStrip() {
+export interface PersonsStripProps {
+  selectedPersonId?: string | null;
+  onPersonSelect?: (person: PersonListItem) => void;
+}
+
+export default function PersonsStrip({
+  selectedPersonId = null,
+  onPersonSelect,
+}: PersonsStripProps) {
   const [persons, setPersons] = useState<PersonListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,21 +65,32 @@ export default function PersonsStrip() {
             </div>
           ))}
         {!isLoading &&
-          persons.map((p) => (
-            <div key={p.id} className={styles.item}>
-              <div className={styles.avatar}>
-                {p.cover_url ? (
-                  <img src={p.cover_url} alt="" loading="lazy" decoding="async" />
-                ) : (
-                  <User className={styles['placeholder-icon']} aria-hidden />
-                )}
-              </div>
-              <span className={styles.name} title={displayName(p.name)}>
-                {displayName(p.name)}
-              </span>
-              <span className={styles.count}>{p.photos_count} фото</span>
-            </div>
-          ))}
+          persons.map((p) => {
+            const isSelected = selectedPersonId === p.id;
+            const name = displayName(p.name);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                className={`${styles.item} ${styles.itemButton} ${isSelected ? styles.itemSelected : ''}`}
+                onClick={() => onPersonSelect?.(p)}
+                aria-pressed={isSelected}
+                aria-label={`${isSelected ? 'Сбросить фильтр' : 'Показать фото'}: ${name}`}
+              >
+                <div className={styles.avatar}>
+                  {p.cover_url ? (
+                    <img src={p.cover_url} alt="" loading="lazy" decoding="async" />
+                  ) : (
+                    <User className={styles['placeholder-icon']} aria-hidden />
+                  )}
+                </div>
+                <span className={styles.name} title={name}>
+                  {name}
+                </span>
+                <span className={styles.count}>{p.photos_count} фото</span>
+              </button>
+            );
+          })}
       </div>
     </section>
   );

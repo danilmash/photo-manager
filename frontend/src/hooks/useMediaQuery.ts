@@ -19,3 +19,5 @@ export function useMediaQuery(query: string): boolean {
 }
 
 export const MOBILE_MEDIA_QUERY = '(max-width: 768px)';
+export const INLINE_LIBRARY_FILTERS_MEDIA_QUERY = '(min-width: 1280px)';
+export const VERY_WIDE_VIEWPORT_MEDIA_QUERY = '(min-width: 1536px)';

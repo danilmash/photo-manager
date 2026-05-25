@@ -14,13 +14,22 @@ import PhotoStateBadge, {
 import Modal from '../../components/ui/Modal';
 import PhotoViewer from '../../components/ui/PhotoViewer';
 import PersonsStrip from '../../components/ui/PersonsStrip';
-import SemanticSearchInput from '../../components/ui/SemanticSearchInput';
+import type { PersonListItem } from '../../api/persons';
 import FoldersSidebar from '../../components/features/library/FoldersSidebar/FoldersSidebar';
 import FolderNameModal from '../../components/features/library/FolderNameModal/FolderNameModal';
 import ExportProgressDrawer from '../../components/features/library/ExportProgressDrawer';
+import SemanticSearchExpand from '../../components/features/library/SemanticSearchExpand';
+import LibraryFiltersBar from '../../components/features/library/LibraryFiltersBar';
+import LibraryFiltersDrawer from '../../components/features/library/LibraryFiltersDrawer';
+import { buildFilterSummaryChips } from '../../components/features/library/LibraryFiltersBar/LibraryFiltersForm';
 import { useExportStore } from '../../stores/useExportStore';
 import { useGallerySelection } from '../../hooks/useGallerySelection';
-import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import {
+  INLINE_LIBRARY_FILTERS_MEDIA_QUERY,
+  MOBILE_MEDIA_QUERY,
+  VERY_WIDE_VIEWPORT_MEDIA_QUERY,
+  useMediaQuery,
+} from '../../hooks/useMediaQuery';
 
 /** Миниатюра уже есть после фазы preview; общий status может быть processing (ML). */
 function canShowLibraryThumb(item: AssetListItem): boolean {
@@ -36,6 +45,8 @@ export default function HomePage() {
   const { folderId: routeFolderId } = useParams<{ folderId?: string }>();
   const navigate = useNavigate();
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const hasInlineFiltersViewport = useMediaQuery(INLINE_LIBRARY_FILTERS_MEDIA_QUERY);
+  const isVeryWideViewport = useMediaQuery(VERY_WIDE_VIEWPORT_MEDIA_QUERY);
 
   const {
     items,
@@ -43,7 +54,16 @@ export default function HomePage() {
     error,
     searchQuery,
     folderId,
+    filters,
+    filtersActive,
+    personId,
+    personName,
+    personFilterActive,
     setFolderId,
+    applyFilters,
+    clearFilters,
+    applyPersonFilter,
+    clearPersonFilter,
     loadInitial,
     loadMore,
     search,
@@ -64,6 +84,9 @@ export default function HomePage() {
   const [folderModal, setFolderModal] = useState<FolderModalMode | null>(null);
   const [folderModalError, setFolderModalError] = useState<string | null>(null);
   const [folderModalSubmitting, setFolderModalSubmitting] = useState(false);
+
+  const useInlineFilters =
+    hasInlineFiltersViewport && (!sidebarOpen || isVeryWideViewport);
 
   const startExport = useExportStore((s) => s.startExport);
 
@@ -218,6 +241,22 @@ export default function HomePage() {
     : activeFolder
       ? 'Папка'
       : 'Общая библиотека';
+  const filterSummaryChips = useMemo(
+    () => buildFilterSummaryChips(filters, filtersActive),
+    [filters, filtersActive],
+  );
+
+  const handlePersonSelect = useCallback(
+    (person: PersonListItem) => {
+      const name = person.name.trim() || 'Без имени';
+      if (personFilterActive && personId === person.id) {
+        void clearPersonFilter();
+        return;
+      }
+      void applyPersonFilter(person.id, name);
+    },
+    [applyPersonFilter, clearPersonFilter, personFilterActive, personId],
+  );
 
   return (
     <>
@@ -244,55 +283,118 @@ export default function HomePage() {
         className={`${styles.main} ${sidebarOpen && !isMobile ? styles.mainWithSidebar : ''} ${selectionActive ? styles.mainSelecting : ''}`}
       >
         <div className={`${pageLayout.page} ${styles.page}`}>
-          <section className={pageLayout['page-intro']} aria-labelledby="home-page-title">
-            <div className={pageLayout['page-intro-row']}>
-              <div className={styles.introCopy}>
-                {isMobile ? (
-                  <button
-                    type="button"
-                    className={styles.menuBtn}
-                    onClick={() => setSidebarOpen(true)}
-                    aria-label="Открыть папки"
-                  >
-                    <Menu size={22} />
-                  </button>
-                ) : null}
-                <div>
-                  <h1 id="home-page-title" className={pageLayout.title}>
-                    {selectionActive ? `Выбрано: ${selectedCount}` : pageTitle}
-                  </h1>
-                  <p className={pageLayout.subtitle}>{pageSubtitle}</p>
-                </div>
-              </div>
-              <Button color="primary" variant="filled" size="l" to="/import" icon={<Upload />}>
-                Импорт
-              </Button>
-            </div>
-          </section>
-
-          <section className={pageLayout.section}>
-            <SemanticSearchInput
-              className={styles.search}
+          <section className={`${pageLayout['page-intro']} ${styles.introSection}`} aria-labelledby="home-page-title">
+            <SemanticSearchExpand.Root
               activeQuery={searchQuery}
               isLoading={isLoading}
+              isMobile={isMobile}
               onSearch={search}
               onClear={clearSearch}
-            />
-
-            {searchQuery ? (
-              <div className={styles['search-summary']}>
-                Результаты умного поиска: <strong>{searchQuery}</strong>
-                {activeFolder ? (
-                  <>
-                    {' '}
-                    в папке <strong>{activeFolder.name}</strong>
-                  </>
-                ) : null}
+            >
+              <div className={pageLayout['page-intro-row']}>
+                <div className={styles.introCopy}>
+                  {isMobile ? (
+                    <button
+                      type="button"
+                      className={styles.menuBtn}
+                      onClick={() => setSidebarOpen(true)}
+                      aria-label="Открыть папки"
+                    >
+                      <Menu size={22} />
+                    </button>
+                  ) : null}
+                  <div>
+                    <h1 id="home-page-title" className={pageLayout.title}>
+                      {selectionActive ? `Выбрано: ${selectedCount}` : pageTitle}
+                    </h1>
+                    <p className={pageLayout.subtitle}>{pageSubtitle}</p>
+                  </div>
+                </div>
+                <div className={styles.introActions}>
+                  <SemanticSearchExpand.InlinePanel />
+                  <SemanticSearchExpand.Trigger />
+                  {!useInlineFilters && !searchQuery ? (
+                    <LibraryFiltersDrawer
+                      folderId={folderId}
+                      filters={filters}
+                      filtersActive={filtersActive}
+                      isLoading={isLoading}
+                      onApply={applyFilters}
+                      onClear={clearFilters}
+                    />
+                  ) : null}
+                  <Button color="primary" variant="filled" size="l" to="/import" icon={<Upload />}>
+                    Импорт
+                  </Button>
+                </div>
               </div>
-            ) : null}
+              <SemanticSearchExpand.BelowPanel />
+            </SemanticSearchExpand.Root>
           </section>
 
-          {!activeFolder ? <PersonsStrip /> : null}
+          {searchQuery ? (
+            <div className={styles['search-summary']}>
+              Результаты умного поиска: <strong>{searchQuery}</strong>
+              {activeFolder ? (
+                <>
+                  {' '}
+                  в папке <strong>{activeFolder.name}</strong>
+                </>
+              ) : null}
+              <button
+                type="button"
+                className={styles.searchSummaryClear}
+                onClick={() => {
+                  void clearSearch();
+                }}
+              >
+                Сбросить
+              </button>
+            </div>
+          ) : (
+            <>
+              {personFilterActive ? (
+                <div className={styles['search-summary']}>
+                  Фото с человеком: <strong>{personName ?? 'Без имени'}</strong>
+                  <button
+                    type="button"
+                    className={styles.searchSummaryClear}
+                    onClick={() => {
+                      void clearPersonFilter();
+                    }}
+                  >
+                    Сбросить человека
+                  </button>
+                </div>
+              ) : null}
+              {useInlineFilters ? (
+                <LibraryFiltersBar
+                  folderId={folderId}
+                  filters={filters}
+                  filtersActive={filtersActive}
+                  isLoading={isLoading}
+                  onApply={applyFilters}
+                  onClear={clearFilters}
+                />
+              ) : null}
+              {!useInlineFilters && filtersActive && filterSummaryChips.length > 0 ? (
+                <div className={styles.filterSummary} aria-label="Активные фильтры">
+                  {filterSummaryChips.map((chip) => (
+                    <span key={chip} className={styles.filterSummaryChip}>
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
+
+          {!activeFolder ? (
+            <PersonsStrip
+              selectedPersonId={personFilterActive ? personId : null}
+              onPersonSelect={handlePersonSelect}
+            />
+          ) : null}
 
           {error && <div className={pageLayout.alert}>{error}</div>}
 
@@ -382,9 +484,11 @@ export default function HomePage() {
             <div className={styles.empty}>
               {searchQuery
                 ? 'По запросу ничего не найдено.'
-                : activeFolder
-                  ? 'В этой папке пока нет фотографий. Добавьте их из просмотрщика в блоке «Папки».'
-                  : 'Библиотека пуста. Импортируйте фотографии, чтобы начать.'}
+                : personFilterActive || filtersActive
+                  ? 'По выбранным фильтрам ничего не найдено.'
+                  : activeFolder
+                    ? 'В этой папке пока нет фотографий. Добавьте их из просмотрщика в блоке «Папки».'
+                    : 'Библиотека пуста. Импортируйте фотографии, чтобы начать.'}
             </div>
           ) : null}
 

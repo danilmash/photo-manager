@@ -225,7 +225,7 @@ export default function AdminUsersPage() {
           </div>
           <Button
             color="primary"
-            size="sm"
+            size="l"
             icon={<Plus size={16} />}
             onClick={() => setCreateOpen(true)}
           >

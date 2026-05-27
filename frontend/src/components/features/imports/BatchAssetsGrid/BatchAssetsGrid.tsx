@@ -1,6 +1,7 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 import type { AssetListItem, TaskStatus } from '../../../../api/assets';
+import FacesErrorBadge from '../../../ui/FacesErrorBadge';
 import PhotoStateBadge, {
   resolvePhotoStateBadgeVariant,
   type PhotoStateBadgeVariant,
@@ -133,20 +134,10 @@ export default function BatchAssetsGrid({
               />
             )}
             {state.showFacesError && (
-              <span
+              <FacesErrorBadge
+                message={state.facesErrorMessage}
                 className={styles['faces-error-badge']}
-                title={
-                  state.facesErrorMessage ??
-                  'Поиск лиц завершился ошибкой'
-                }
-                role="img"
-                aria-label={
-                  state.facesErrorMessage ??
-                  'Ошибка поиска лиц'
-                }
-              >
-                <AlertTriangle size={14} strokeWidth={2.25} aria-hidden />
-              </span>
+              />
             )}
             {state.canRetryFaces && (
               <button

@@ -11,6 +11,7 @@ import Button from '../../components/ui/Button';
 import PhotoStateBadge, {
   resolvePhotoStateBadgeVariant,
 } from '../../components/ui/PhotoStateBadge';
+import FacesErrorBadge from '../../components/ui/FacesErrorBadge';
 import Modal from '../../components/ui/Modal';
 import PhotoViewer from '../../components/ui/PhotoViewer';
 import PersonsStrip from '../../components/ui/PersonsStrip';
@@ -416,6 +417,8 @@ export default function HomePage() {
                 const showThumb = canShowLibraryThumb(item);
                 const canOpen = showThumb;
                 const photoBadge = resolvePhotoStateBadgeVariant(item);
+                const facesFailed = item.version?.faces_status === 'failed';
+                const facesErrorMessage = item.version?.faces_error?.trim() || null;
                 const isSelected = selectedAssetIds.has(item.asset_id);
                 const tileHandlers = getTileHandlers(item.asset_id, canOpen);
                 return (
@@ -459,6 +462,12 @@ export default function HomePage() {
                               variant={photoBadge}
                               className={styles['state-badge']}
                               size="sm"
+                            />
+                          )}
+                          {facesFailed && (
+                            <FacesErrorBadge
+                              message={facesErrorMessage}
+                              className={styles['faces-error-badge']}
                             />
                           )}
                         </>

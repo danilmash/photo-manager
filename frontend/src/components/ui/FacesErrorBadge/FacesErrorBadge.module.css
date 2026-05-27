@@ -1,0 +1,11 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: var(--color-text-on-accent, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}

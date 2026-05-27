@@ -295,6 +295,13 @@
   z-index: 1;
 }
 
+.faces-error-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 1;
+}
+
 .skeleton-badge {
   position: absolute;
   left: 8px;

@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import {
   getAssetStatus,
   listAssets,
+  retryAssetFaces,
   uploadAsset,
   type AssetListItem,
 } from '../api/assets';
@@ -16,6 +17,7 @@ import {
   getImportBatchDuplicateGroups,
   getImportBatchTagSuggestions,
   listImportBatches,
+  retryBatchFailedFaces,
   type ImportBatch,
   type ImportBatchDuplicateCandidateItem,
   type ImportBatchDuplicateGroup,
@@ -71,6 +73,12 @@ interface ImportSessionState {
   createBatch: () => Promise<ImportBatch>;
   closeBatch: (batchId: string) => Promise<void>;
   acceptBatch: (batchId: string) => Promise<void>;
+  retryBatchFaces: (batchId: string) => Promise<void>;
+  retryAssetMl: (
+    batchId: string,
+    assetId: string,
+    versionId: string,
+  ) => Promise<void>;
   refreshBatch: (batchId: string) => Promise<ImportBatch | null>;
 
   fetchBatchAssets: (batchId: string) => Promise<void>;
@@ -244,6 +252,42 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
     const updated = await acceptImportBatch(batchId);
     set((state) => ({
       batches: upsertBatch(state.batches, updated),
+    }));
+  },
+
+  retryBatchFaces: async (batchId) => {
+    await retryBatchFailedFaces(batchId);
+    const batch = await getImportBatch(batchId);
+    set((state) => ({
+      batches: upsertBatch(state.batches, batch),
+    }));
+  },
+
+  retryAssetMl: async (batchId, assetId, versionId) => {
+    const updated = await retryAssetFaces(assetId, versionId);
+    set((state) => {
+      const assets = state.assetsByBatch[batchId] ?? [];
+      const nextAssets = assets.map((asset) => {
+        if (asset.asset_id !== assetId || !asset.version) return asset;
+        return {
+          ...asset,
+          version: {
+            ...asset.version,
+            status: updated.status,
+            preview_status: updated.preview_status,
+            faces_status: updated.faces_status,
+            preview_error: updated.preview_error,
+            faces_error: updated.faces_error,
+          },
+        };
+      });
+      return {
+        assetsByBatch: { ...state.assetsByBatch, [batchId]: nextAssets },
+      };
+    });
+    const batch = await getImportBatch(batchId);
+    set((state) => ({
+      batches: upsertBatch(state.batches, batch),
     }));
   },
 

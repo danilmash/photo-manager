@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Menu } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Menu, RefreshCw } from 'lucide-react';
 
 import type { AssetListItem } from '../../api/assets';
 import BatchAssetsGrid from '../../components/features/imports/BatchAssetsGrid';
@@ -87,6 +87,8 @@ export default function ImportPage() {
   const createBatch = useImportSessionStore((s) => s.createBatch);
   const closeBatch = useImportSessionStore((s) => s.closeBatch);
   const acceptBatch = useImportSessionStore((s) => s.acceptBatch);
+  const retryBatchFaces = useImportSessionStore((s) => s.retryBatchFaces);
+  const retryAssetMl = useImportSessionStore((s) => s.retryAssetMl);
   const refreshBatch = useImportSessionStore((s) => s.refreshBatch);
   const fetchBatchAssets = useImportSessionStore((s) => s.fetchBatchAssets);
   const fetchBatchTagSuggestions = useImportSessionStore(
@@ -165,6 +167,8 @@ export default function ImportPage() {
   const [isCreating, setIsCreating] = useState<boolean>(false);
   const [isClosing, setIsClosing] = useState<boolean>(false);
   const [isAccepting, setIsAccepting] = useState<boolean>(false);
+  const [isRetryingMl, setIsRetryingMl] = useState<boolean>(false);
+  const [retryingAssetId, setRetryingAssetId] = useState<string | null>(null);
   const [duplicatesCollapsed, setDuplicatesCollapsed] = useState(false);
   const [faceClustersCollapsed, setFaceClustersCollapsed] = useState(false);
   const [dupClusterViewer, setDupClusterViewer] = useState<{
@@ -212,6 +216,28 @@ export default function ImportPage() {
     () => (batchId ? assetsByBatch[batchId] ?? [] : []),
     [assetsByBatch, batchId],
   );
+  const mlFailedCount = useMemo(
+    () =>
+      activeAssets.filter((asset) => asset.version?.faces_status === 'failed')
+        .length,
+    [activeAssets],
+  );
+  const canRetryMl = useMemo(() => {
+    if (!activeBatch || mlFailedCount === 0) return false;
+    return (
+      activeBatch.status === 'processing' ||
+      activeBatch.status === 'pending_review'
+    );
+  }, [activeBatch, mlFailedCount]);
+  const canRetryAssetMl = canRetryMl;
+  const showMlErrorsBanner = useMemo(() => {
+    if (mlFailedCount === 0 || !activeBatch) return false;
+    return (
+      activeBatch.status === 'processing' ||
+      activeBatch.status === 'pending_review' ||
+      activeBatch.status === 'accepted'
+    );
+  }, [activeBatch, mlFailedCount]);
   const isAssetsLoading = batchId
     ? assetsLoadingByBatch[batchId] ?? false
     : false;
@@ -316,6 +342,40 @@ export default function ImportPage() {
       setIsAccepting(false);
     }
   }, [acceptBatch, batchId, canAcceptReview, isAccepting]);
+
+  const handleRetryMl = useCallback(async () => {
+    if (!batchId || !canRetryMl || isRetryingMl) return;
+    setIsRetryingMl(true);
+    try {
+      await retryBatchFaces(batchId);
+      void fetchBatchAssets(batchId);
+      startBatchPolling(batchId);
+    } finally {
+      setIsRetryingMl(false);
+    }
+  }, [
+    batchId,
+    canRetryMl,
+    fetchBatchAssets,
+    isRetryingMl,
+    retryBatchFaces,
+    startBatchPolling,
+  ]);
+
+  const handleRetryAssetFaces = useCallback(
+    async (asset: AssetListItem) => {
+      if (!batchId || !canRetryAssetMl || !asset.version?.id) return;
+      if (retryingAssetId === asset.asset_id) return;
+      setRetryingAssetId(asset.asset_id);
+      try {
+        await retryAssetMl(batchId, asset.asset_id, asset.version.id);
+        startBatchPolling(batchId);
+      } finally {
+        setRetryingAssetId(null);
+      }
+    },
+    [batchId, canRetryAssetMl, retryAssetMl, retryingAssetId, startBatchPolling],
+  );
 
   useEffect(() => {
     setDupClusterViewer(null);
@@ -450,7 +510,12 @@ export default function ImportPage() {
                       </p>
                     </div>
                   </div>
-                  <BatchAssetsGrid className={styles.assetsGrid} assets={activeAssets} />
+                  <BatchAssetsGrid
+                    className={styles.assetsGrid}
+                    assets={activeAssets}
+                    onRetryFaces={canRetryAssetMl ? handleRetryAssetFaces : undefined}
+                    retryingAssetId={retryingAssetId}
+                  />
                 </section>
 
                 <aside className={styles.infoPanel}>
@@ -536,6 +601,32 @@ export default function ImportPage() {
                     activeBatch.status === 'cancelled') && (
                     <div className={`${styles.banner} ${styles['banner-muted']}`}>
                       Партия {STATUS_LABEL[activeBatch.status]?.toLowerCase()}.
+                    </div>
+                  )}
+
+                  {showMlErrorsBanner && (
+                    <div
+                      className={`${styles.banner} ${styles['banner-warning']}`}
+                      role="status"
+                    >
+                      <p className={styles['ml-error-text']}>
+                        ML-ошибки: <strong>{mlFailedCount}</strong> фото не
+                        обработаны. Наведите на значок ошибки, чтобы увидеть
+                        причину, или нажмите кнопку повтора на плитке фото.
+                      </p>
+                      {canRetryMl && (
+                        <button
+                          type="button"
+                          className={styles['retry-ml-btn']}
+                          onClick={handleRetryMl}
+                          disabled={isRetryingMl}
+                        >
+                          <RefreshCw size={16} aria-hidden />
+                          <span>
+                            {isRetryingMl ? 'Повторяем…' : 'Повторить ML'}
+                          </span>
+                        </button>
+                      )}
                     </div>
                   )}
 

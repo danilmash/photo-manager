@@ -215,11 +215,7 @@ def _generate_face_crops(db, version: AssetVersion, preview_path: Path):
 
 
 def _save_face_detections(db, version: AssetVersion, preview_path: Path):
-    try:
-        faces = detect_faces(str(preview_path))
-    except Exception as e:
-        print(f"[faces] ml сервис недоступен: {e}")
-        return
+    faces = detect_faces(str(preview_path))
 
     for face in faces:
         if face["confidence"] < FACE_CONFIDENCE_THRESHOLD:
@@ -307,6 +303,10 @@ def scan_import_batch_duplicates(batch_id: str) -> None:
     db = SessionLocal()
     try:
         run_duplicate_scan_for_batch(db, bid)
+    except Exception as exc:
+        db.rollback()
+        print(f"[duplicates] scan failed for batch {batch_id}: {exc}")
+        raise
     finally:
         db.close()
 
@@ -492,14 +492,7 @@ def process_asset_ml(version_id: str):
             _save_face_detections(db, version, preview_path)
             db.flush()
 
-            try:
-                version.semantic_embedding = embed_image(str(preview_path))
-                db.commit()
-            except Exception:
-                db.rollback()
-                version = db.query(AssetVersion).filter_by(id=version_uuid).first()
-                if not version:
-                    return
+            version.semantic_embedding = embed_image(str(preview_path))
             db.flush()
 
             transfer_user_assignments_from_base_version(

@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from wand.image import Image
 
@@ -164,7 +165,25 @@ def _compare_versions(source: AssetVersion, other: AssetVersion) -> _Match | Non
     return max(candidates, key=lambda m: (m.score, -m.distance))
 
 
+def _acquire_batch_duplicate_scan_lock(db: Session, batch_id: uuid.UUID) -> None:
+    """Сериализует скан одной партии — иначе параллельные preview-задачи
+    ставят несколько scan_import_batch_duplicates и ловят UniqueViolation."""
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:batch_id))"),
+        {"batch_id": str(batch_id)},
+    )
+
+
+def _commit_duplicate_scan(db: Session) -> None:
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+
+
 def run_duplicate_scan_for_batch(db: Session, batch_id: uuid.UUID) -> None:
+    _acquire_batch_duplicate_scan_lock(db, batch_id)
+
     batch_assets = (
         db.query(Asset)
         .filter(
@@ -238,7 +257,7 @@ def run_duplicate_scan_for_batch(db: Session, batch_id: uuid.UUID) -> None:
                 asset.duplicate_review_status = DUPLICATE_REVIEW_HAS_DUPLICATES
             else:
                 asset.duplicate_review_status = DUPLICATE_REVIEW_NO_DUPLICATES
-        db.commit()
+        _commit_duplicate_scan(db)
         return
 
     sources_pool = set(ordered_ids)
@@ -291,8 +310,19 @@ def run_duplicate_scan_for_batch(db: Session, batch_id: uuid.UUID) -> None:
                 involved.add(source_id)
                 involved.add(m.candidate_id)
 
+    existing_pairs = {
+        (r.source_asset_id, r.candidate_asset_id)
+        for r in db.query(AssetDuplicateCandidate).filter(
+            AssetDuplicateCandidate.source_asset_id.in_(asset_ids),
+            AssetDuplicateCandidate.candidate_asset_id.in_(asset_ids),
+        ).all()
+    }
     for row in rows:
+        key = (row.source_asset_id, row.candidate_asset_id)
+        if key in existing_pairs:
+            continue
         db.add(row)
+        existing_pairs.add(key)
 
     for aid in ordered_ids:
         asset = asset_by_id.get(aid)
@@ -309,4 +339,4 @@ def run_duplicate_scan_for_batch(db: Session, batch_id: uuid.UUID) -> None:
         if asset.id not in ordered_ids:
             asset.duplicate_review_status = DUPLICATE_REVIEW_NO_DUPLICATES
 
-    db.commit()
+    _commit_duplicate_scan(db)

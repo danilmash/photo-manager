@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 import type { AssetListItem, TaskStatus } from '../../../../api/assets';
 import PhotoStateBadge, {
@@ -14,6 +14,8 @@ interface TileState {
   variant: TileVariant;
   photoBadge: PhotoStateBadgeVariant | null;
   showFacesError: boolean;
+  facesErrorMessage: string | null;
+  canRetryFaces: boolean;
   clickable: boolean;
 }
 
@@ -21,7 +23,11 @@ function isPreviewInFlight(status: TaskStatus): boolean {
   return status === 'pending' || status === 'processing';
 }
 
-function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileState {
+function deriveTileState(
+  asset: AssetListItem,
+  hasClickHandler: boolean,
+  canRetryFaces: boolean,
+): TileState {
   const preview = asset.version?.preview_status ?? 'pending';
   const faces = asset.version?.faces_status ?? 'pending';
 
@@ -30,6 +36,8 @@ function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileSt
       variant: 'error',
       photoBadge: null,
       showFacesError: false,
+      facesErrorMessage: null,
+      canRetryFaces: false,
       clickable: false,
     };
   }
@@ -39,18 +47,26 @@ function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileSt
       variant: 'skeleton',
       photoBadge: 'processing',
       showFacesError: false,
+      facesErrorMessage: null,
+      canRetryFaces: false,
       clickable: false,
     };
   }
 
   const hasThumb = !!asset.version?.thumbnail_url;
   const facesFailed = faces === 'failed';
+  const facesErrorMessage =
+    facesFailed && asset.version?.faces_error?.trim()
+      ? asset.version.faces_error.trim()
+      : null;
   const photoBadge = resolvePhotoStateBadgeVariant(asset);
 
   return {
     variant: hasThumb ? 'thumb' : 'skeleton',
     photoBadge,
     showFacesError: facesFailed,
+    facesErrorMessage,
+    canRetryFaces: canRetryFaces && facesFailed && !!asset.version?.id,
     clickable: hasClickHandler && hasThumb,
   };
 }
@@ -58,10 +74,18 @@ function deriveTileState(asset: AssetListItem, hasClickHandler: boolean): TileSt
 export interface BatchAssetsGridProps {
   assets: AssetListItem[];
   onSelect?: (asset: AssetListItem) => void;
+  onRetryFaces?: (asset: AssetListItem) => void;
+  retryingAssetId?: string | null;
   className?: string;
 }
 
-export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAssetsGridProps) {
+export default function BatchAssetsGrid({
+  assets,
+  onSelect,
+  onRetryFaces,
+  retryingAssetId = null,
+  className,
+}: BatchAssetsGridProps) {
   if (assets.length === 0) {
     return (
       <p className={styles.empty}>
@@ -73,7 +97,8 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
   return (
     <ul className={`${styles.grid} ${className ?? ''}`}>
       {assets.map((asset) => {
-        const state = deriveTileState(asset, !!onSelect);
+        const state = deriveTileState(asset, !!onSelect, !!onRetryFaces);
+        const isRetrying = retryingAssetId === asset.asset_id;
 
         const tile = (
           <div className={styles.tile}>
@@ -110,12 +135,46 @@ export default function BatchAssetsGrid({ assets, onSelect, className }: BatchAs
             {state.showFacesError && (
               <span
                 className={styles['faces-error-badge']}
-                title="Поиск лиц завершился ошибкой"
+                title={
+                  state.facesErrorMessage ??
+                  'Поиск лиц завершился ошибкой'
+                }
                 role="img"
-                aria-label="Ошибка поиска лиц"
+                aria-label={
+                  state.facesErrorMessage ??
+                  'Ошибка поиска лиц'
+                }
               >
                 <AlertTriangle size={14} strokeWidth={2.25} aria-hidden />
               </span>
+            )}
+            {state.canRetryFaces && (
+              <button
+                type="button"
+                className={styles['retry-faces-btn']}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRetryFaces?.(asset);
+                }}
+                disabled={isRetrying}
+                title={
+                  state.facesErrorMessage
+                    ? `Повторить ML: ${state.facesErrorMessage}`
+                    : 'Повторить ML для этого фото'
+                }
+                aria-label={
+                  isRetrying
+                    ? 'Повтор ML выполняется'
+                    : 'Повторить ML для этого фото'
+                }
+              >
+                <RefreshCw
+                  size={14}
+                  strokeWidth={2.25}
+                  className={isRetrying ? styles.spin : undefined}
+                  aria-hidden
+                />
+              </button>
             )}
           </div>
         );

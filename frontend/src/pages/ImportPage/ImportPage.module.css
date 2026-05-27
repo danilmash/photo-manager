@@ -192,6 +192,43 @@
   border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
 }
 
+.banner-warning {
+  background: color-mix(in srgb, var(--color-danger) 10%, var(--color-bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-danger) 24%, var(--color-border));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ml-error-text {
+  margin: 0;
+}
+
+.retry-ml-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.retry-ml-btn:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.retry-ml-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .reviewSection {
   padding: 14px 16px;
   border-radius: 10px;

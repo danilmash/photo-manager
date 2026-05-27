@@ -90,6 +90,47 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
+.retry-faces-btn {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: color-mix(in srgb, var(--color-bg-primary) 88%, transparent);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.retry-faces-btn:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.retry-faces-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .empty {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);

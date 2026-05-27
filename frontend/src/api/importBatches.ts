@@ -62,6 +62,13 @@ export async function closeImportBatch(batchId: string): Promise<ImportBatch> {
   return data;
 }
 
+export async function acceptImportBatch(batchId: string): Promise<ImportBatch> {
+  const { data } = await api.post<ImportBatch>(
+    `/import-batches/${batchId}/accept`,
+  );
+  return data;
+}
+
 export interface ImportBatchRetrySummary {
   batch_id: string;
   restarted: number;

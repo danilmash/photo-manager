@@ -9,6 +9,7 @@ import {
 } from '../api/assets';
 import {
   applyImportBatchTags,
+  acceptImportBatch,
   closeImportBatch,
   createImportBatch,
   getImportBatch,
@@ -69,6 +70,7 @@ interface ImportSessionState {
   fetchBatches: () => Promise<void>;
   createBatch: () => Promise<ImportBatch>;
   closeBatch: (batchId: string) => Promise<void>;
+  acceptBatch: (batchId: string) => Promise<void>;
   refreshBatch: (batchId: string) => Promise<ImportBatch | null>;
 
   fetchBatchAssets: (batchId: string) => Promise<void>;
@@ -233,6 +235,13 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
 
   closeBatch: async (batchId) => {
     const updated = await closeImportBatch(batchId);
+    set((state) => ({
+      batches: upsertBatch(state.batches, updated),
+    }));
+  },
+
+  acceptBatch: async (batchId) => {
+    const updated = await acceptImportBatch(batchId);
     set((state) => ({
       batches: upsertBatch(state.batches, updated),
     }));

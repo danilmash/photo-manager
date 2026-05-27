@@ -86,6 +86,7 @@ export default function ImportPage() {
   const fetchBatches = useImportSessionStore((s) => s.fetchBatches);
   const createBatch = useImportSessionStore((s) => s.createBatch);
   const closeBatch = useImportSessionStore((s) => s.closeBatch);
+  const acceptBatch = useImportSessionStore((s) => s.acceptBatch);
   const refreshBatch = useImportSessionStore((s) => s.refreshBatch);
   const fetchBatchAssets = useImportSessionStore((s) => s.fetchBatchAssets);
   const fetchBatchTagSuggestions = useImportSessionStore(
@@ -124,6 +125,9 @@ export default function ImportPage() {
   const duplicateDupFetchFailed = useImportSessionStore((s) =>
     batchId ? (s.duplicateDupFetchFailedByBatch[batchId] ?? false) : false,
   );
+  const duplicatePending = useImportSessionStore((s) =>
+    batchId ? (s.duplicatePendingByBatch[batchId] ?? 0) : 0,
+  );
   const faceClusters = useImportSessionStore((s) =>
     batchId
       ? s.faceClustersByBatch[batchId] ?? EMPTY_FACE_CLUSTERS
@@ -160,6 +164,7 @@ export default function ImportPage() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [isCreating, setIsCreating] = useState<boolean>(false);
   const [isClosing, setIsClosing] = useState<boolean>(false);
+  const [isAccepting, setIsAccepting] = useState<boolean>(false);
   const [duplicatesCollapsed, setDuplicatesCollapsed] = useState(false);
   const [faceClustersCollapsed, setFaceClustersCollapsed] = useState(false);
   const [dupClusterViewer, setDupClusterViewer] = useState<{
@@ -257,6 +262,60 @@ export default function ImportPage() {
       setIsClosing(false);
     }
   }, [batchId, canClose, closeBatch, isClosing]);
+
+  const canAcceptReview = useMemo(() => {
+    if (!activeBatch || activeBatch.status !== 'pending_review') return false;
+    if (!duplicatesLoaded || duplicateDupFetchFailed) return false;
+    if (!faceClustersLoaded || faceClustersFetchFailed) return false;
+    if (duplicatePending > 0) return false;
+    return faceClusters.every((cluster) => cluster.review_required_count === 0);
+  }, [
+    activeBatch,
+    duplicateDupFetchFailed,
+    duplicatePending,
+    duplicatesLoaded,
+    faceClusters,
+    faceClustersFetchFailed,
+    faceClustersLoaded,
+  ]);
+
+  const acceptReviewHint = useMemo(() => {
+    if (!activeBatch || activeBatch.status !== 'pending_review') return '';
+    if (!duplicatesLoaded || !faceClustersLoaded) {
+      return 'Дождитесь загрузки данных о дубликатах и лицах';
+    }
+    if (duplicateDupFetchFailed || faceClustersFetchFailed) {
+      return 'Не удалось загрузить данные для проверки. Обновите страницу';
+    }
+    if (duplicatePending > 0) {
+      return `Осталось проверить ${duplicatePending} дубликатов`;
+    }
+    const pendingClusters = faceClusters.filter(
+      (cluster) => cluster.review_required_count > 0,
+    ).length;
+    if (pendingClusters > 0) {
+      return `Осталось проверить ${pendingClusters} кластеров лиц`;
+    }
+    return 'Подтвердить завершение проверки партии';
+  }, [
+    activeBatch,
+    duplicateDupFetchFailed,
+    duplicatePending,
+    duplicatesLoaded,
+    faceClusters,
+    faceClustersFetchFailed,
+    faceClustersLoaded,
+  ]);
+
+  const handleAcceptReview = useCallback(async () => {
+    if (!batchId || !canAcceptReview || isAccepting) return;
+    setIsAccepting(true);
+    try {
+      await acceptBatch(batchId);
+    } finally {
+      setIsAccepting(false);
+    }
+  }, [acceptBatch, batchId, canAcceptReview, isAccepting]);
 
   useEffect(() => {
     setDupClusterViewer(null);
@@ -432,6 +491,21 @@ export default function ImportPage() {
                           </span>
                         </button>
                       )}
+
+                      {activeBatch.status === 'pending_review' && (
+                        <button
+                          type="button"
+                          className={styles['accept-btn']}
+                          onClick={handleAcceptReview}
+                          disabled={!canAcceptReview || isAccepting}
+                          title={acceptReviewHint}
+                        >
+                          <CheckCircle2 size={16} />
+                          <span>
+                            {isAccepting ? 'Завершаем…' : 'Завершить проверку'}
+                          </span>
+                        </button>
+                      )}
                     </div>
                   </section>
 
@@ -447,7 +521,14 @@ export default function ImportPage() {
 
                   {activeBatch.status === 'pending_review' && (
                     <div className={styles.banner}>
-                      Обработка завершена. Партия готова к ревью.
+                      Обработка завершена. Проверьте дубликаты и лица, затем
+                      завершите проверку.
+                    </div>
+                  )}
+
+                  {activeBatch.status === 'accepted' && (
+                    <div className={`${styles.banner} ${styles['banner-success']}`}>
+                      Партия принята. Импорт завершён.
                     </div>
                   )}
 

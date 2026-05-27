@@ -127,6 +127,31 @@
   cursor: not-allowed;
 }
 
+.accept-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-accent) 82%, #2d8a4e);
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.accept-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 70%, #2d8a4e);
+}
+
+.accept-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .menu-btn {
   display: inline-flex;
   align-items: center;
@@ -160,6 +185,11 @@
 .banner-muted {
   background: var(--color-bg-secondary);
   color: var(--color-text-secondary);
+}
+
+.banner-success {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
 }
 
 .reviewSection {

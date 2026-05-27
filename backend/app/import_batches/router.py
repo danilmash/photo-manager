@@ -28,6 +28,7 @@ from app.faces.models import FaceDetection
 from app.assets.tasks import process_asset_ml, process_asset_preview
 from app.database import get_db
 from app.import_batches.models import (
+    IMPORT_BATCH_STATUS_ACCEPTED,
     IMPORT_BATCH_STATUS_PENDING_REVIEW,
     IMPORT_BATCH_STATUS_PROCESSING,
     IMPORT_BATCH_STATUS_UPLOADING,
@@ -219,6 +220,36 @@ def _preview_file_ids_for_assets(
         if aid is not None and aid not in out:
             out[aid] = f.id
     return out
+
+
+def _batch_review_blockers(
+    db: Session,
+    batch_id: uuid_mod.UUID,
+) -> tuple[int, int]:
+    """Число непроверенных дубликатов и лиц, блокирующих accept партии."""
+    pending_duplicates = (
+        db.query(func.count(AssetDuplicateCandidate.id))
+        .join(Asset, AssetDuplicateCandidate.source_asset_id == Asset.id)
+        .filter(
+            Asset.import_batch_id == batch_id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+            AssetDuplicateCandidate.review_decision.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    pending_faces = (
+        db.query(func.count(FaceDetection.id))
+        .join(Asset, FaceDetection.asset_id == Asset.id)
+        .filter(
+            Asset.import_batch_id == batch_id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
+            FaceDetection.review_required.is_(True),
+        )
+        .scalar()
+        or 0
+    )
+    return pending_duplicates, pending_faces
 
 
 @router.post(
@@ -589,6 +620,54 @@ def close_import_batch(
     for vid in ready_version_ids:
         process_asset_ml.delay(str(vid))
 
+    return _to_schema(batch, assets_count)
+
+
+@router.post("/{batch_id}/accept", response_model=ImportBatchSchema)
+def accept_import_batch(
+    batch_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Партия импорта не найдена",
+        )
+
+    if batch.status != IMPORT_BATCH_STATUS_PENDING_REVIEW:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Принять можно только партию в статусе 'pending_review', "
+                f"текущий: '{batch.status}'"
+            ),
+        )
+
+    pending_duplicates, pending_faces = _batch_review_blockers(db, batch_id)
+    if pending_duplicates > 0 or pending_faces > 0:
+        parts: list[str] = []
+        if pending_duplicates > 0:
+            parts.append(f"{pending_duplicates} дубликатов")
+        if pending_faces > 0:
+            parts.append(f"{pending_faces} лиц")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Осталось проверить {' и '.join(parts)}",
+        )
+
+    batch.status = IMPORT_BATCH_STATUS_ACCEPTED
+    db.commit()
+    db.refresh(batch)
+
+    assets_count = (
+        db.query(func.count(Asset.id))
+        .filter(Asset.import_batch_id == batch.id)
+        .filter(Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE)
+        .scalar()
+        or 0
+    )
     return _to_schema(batch, assets_count)
 
 

@@ -28,6 +28,7 @@ const DESKTOP_MEDIA_QUERY = '(min-width: 769px)';
 
 const EMPTY_DUP_GROUPS: ImportBatchDuplicateGroup[] = [];
 const EMPTY_FACE_CLUSTERS: ImportBatchFaceCluster[] = [];
+const EMPTY_ASSETS: AssetListItem[] = [];
 
 /** Тултип у значка под заголовком блока «Дубликаты в партии». */
 const DUPLICATE_SECTION_HELP_TOOLTIP =
@@ -91,6 +92,10 @@ export default function ImportPage() {
   const retryAssetMl = useImportSessionStore((s) => s.retryAssetMl);
   const refreshBatch = useImportSessionStore((s) => s.refreshBatch);
   const fetchBatchAssets = useImportSessionStore((s) => s.fetchBatchAssets);
+  const fetchBatchFaceClusters = useImportSessionStore((s) => s.fetchBatchFaceClusters);
+  const fetchBatchReviewAssetsTotal = useImportSessionStore(
+    (s) => s.fetchBatchReviewAssetsTotal,
+  );
   const fetchBatchTagSuggestions = useImportSessionStore(
     (s) => s.fetchBatchTagSuggestions,
   );
@@ -141,6 +146,9 @@ export default function ImportPage() {
   const faceClustersFetchFailed = useImportSessionStore((s) =>
     batchId ? (s.faceClustersFetchFailedByBatch[batchId] ?? false) : false,
   );
+  const reviewAssetsTotal = useImportSessionStore((s) =>
+    batchId ? (s.reviewAssetsTotalByBatch[batchId] ?? 0) : 0,
+  );
   const updateFaceClusterAssignment = useImportSessionStore(
     (s) => s.updateFaceClusterAssignment,
   );
@@ -177,6 +185,10 @@ export default function ImportPage() {
     batchId: string;
     groups: ImportBatchDuplicateGroup[];
   } | null>(null);
+  const [assetViewer, setAssetViewer] = useState<{
+    photos: AssetListItem[];
+    index: number;
+  } | null>(null);
 
   useEffect(() => {
     setSidebarOpen(isDesktop);
@@ -194,6 +206,7 @@ export default function ImportPage() {
     void fetchBatchAssets(batchId);
     void refreshBatch(batchId);
     void fetchBatchTagSuggestions(batchId);
+    void fetchBatchReviewAssetsTotal(batchId);
     startBatchPolling(batchId);
     return () => {
       stopBatchPolling();
@@ -201,6 +214,7 @@ export default function ImportPage() {
   }, [
     batchId,
     fetchBatchAssets,
+    fetchBatchReviewAssetsTotal,
     fetchBatchTagSuggestions,
     refreshBatch,
     startBatchPolling,
@@ -213,9 +227,30 @@ export default function ImportPage() {
   );
 
   const activeAssets = useMemo(
-    () => (batchId ? assetsByBatch[batchId] ?? [] : []),
+    () => (batchId ? assetsByBatch[batchId] ?? EMPTY_ASSETS : EMPTY_ASSETS),
     [assetsByBatch, batchId],
   );
+
+  const outsideClusterAssetIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const asset of activeAssets) {
+      if ((asset.unassigned_faces_count ?? 0) > 0) {
+        ids.add(asset.asset_id);
+      }
+    }
+    return ids;
+  }, [activeAssets]);
+
+  const viewerPhotos = useMemo(
+    () =>
+      activeAssets.filter(
+        (asset) =>
+          asset.version?.preview_status === 'completed' &&
+          !!asset.version?.thumbnail_url,
+      ),
+    [activeAssets],
+  );
+
   const mlFailedCount = useMemo(
     () =>
       activeAssets.filter((asset) => asset.version?.faces_status === 'failed')
@@ -294,6 +329,7 @@ export default function ImportPage() {
     if (!duplicatesLoaded || duplicateDupFetchFailed) return false;
     if (!faceClustersLoaded || faceClustersFetchFailed) return false;
     if (duplicatePending > 0) return false;
+    if (reviewAssetsTotal > 0) return false;
     return faceClusters.every((cluster) => cluster.review_required_count === 0);
   }, [
     activeBatch,
@@ -303,6 +339,7 @@ export default function ImportPage() {
     faceClusters,
     faceClustersFetchFailed,
     faceClustersLoaded,
+    reviewAssetsTotal,
   ]);
 
   const acceptReviewHint = useMemo(() => {
@@ -322,6 +359,9 @@ export default function ImportPage() {
     if (pendingClusters > 0) {
       return `Осталось проверить ${pendingClusters} кластеров лиц`;
     }
+    if (reviewAssetsTotal > 0) {
+      return `Осталось назначить персон для ${reviewAssetsTotal} фото`;
+    }
     return 'Подтвердить завершение проверки партии';
   }, [
     activeBatch,
@@ -331,6 +371,7 @@ export default function ImportPage() {
     faceClusters,
     faceClustersFetchFailed,
     faceClustersLoaded,
+    reviewAssetsTotal,
   ]);
 
   const handleAcceptReview = useCallback(async () => {
@@ -439,9 +480,34 @@ export default function ImportPage() {
         person_name: updated.person_name,
         review_required_count: updated.review_required_count,
       });
+      void fetchBatchReviewAssetsTotal(batchId);
     },
-    [batchId, updateFaceClusterAssignment],
+    [batchId, fetchBatchReviewAssetsTotal, updateFaceClusterAssignment],
   );
+
+  const handleClustersRefresh = useCallback(async () => {
+    if (!batchId) return;
+    await Promise.all([
+      fetchBatchFaceClusters(batchId),
+      fetchBatchReviewAssetsTotal(batchId),
+    ]);
+  }, [batchId, fetchBatchFaceClusters, fetchBatchReviewAssetsTotal]);
+
+  const handleOpenAsset = useCallback(
+    (asset: AssetListItem) => {
+      const index = viewerPhotos.findIndex((item) => item.asset_id === asset.asset_id);
+      if (index < 0) return;
+      setAssetViewer({ photos: viewerPhotos, index });
+    },
+    [viewerPhotos],
+  );
+
+  const handleAssetViewerClose = useCallback(() => {
+    setAssetViewer(null);
+    if (batchId) {
+      void fetchBatchReviewAssetsTotal(batchId);
+    }
+  }, [batchId, fetchBatchReviewAssetsTotal]);
 
   const handleApplyBatchTags = useCallback(
     async (tags: string[]) => {
@@ -513,6 +579,8 @@ export default function ImportPage() {
                   <BatchAssetsGrid
                     className={styles.assetsGrid}
                     assets={activeAssets}
+                    onSelect={handleOpenAsset}
+                    outsideClusterAssetIds={outsideClusterAssetIds}
                     onRetryFaces={canRetryAssetMl ? handleRetryAssetFaces : undefined}
                     retryingAssetId={retryingAssetId}
                   />
@@ -775,11 +843,29 @@ export default function ImportPage() {
                                 </>
                               ) : null}
                             </p>
+                            {reviewAssetsTotal > 0 ? (
+                              <p className={styles.reviewWarning} role="status">
+                                <strong>{reviewAssetsTotal}</strong> фото с лицами без
+                                назначенной персоны
+                                {outsideClusterAssetIds.size > 0 ? (
+                                  <>
+                                    {' '}
+                                    (в сетке слева отмечены{' '}
+                                    <strong>{outsideClusterAssetIds.size}</strong> с лицами
+                                    вне кластера — нажмите, чтобы открыть просмотр)
+                                  </>
+                                ) : (
+                                  '. Назначьте персону в просмотре фото'
+                                )}
+                                .
+                              </p>
+                            ) : null}
                             {batchId ? (
                               <FaceIdentityClustersSection
                                 batchId={batchId}
                                 clusters={faceClusters}
                                 onClusterUpdated={handleFaceClusterUpdated}
+                                onClustersRefresh={handleClustersRefresh}
                               />
                             ) : null}
                           </>
@@ -826,6 +912,36 @@ export default function ImportPage() {
             }
             onSelect={(index) =>
               setDupClusterViewer((v) => (v ? { ...v, index } : v))
+            }
+          />
+        ) : null}
+      </Modal>
+
+      <Modal
+        dark
+        variant="fullscreen"
+        isOpen={assetViewer !== null}
+        onClose={handleAssetViewerClose}
+      >
+        {assetViewer ? (
+          <PhotoViewer
+            photos={assetViewer.photos}
+            currentIndex={assetViewer.index}
+            onClose={handleAssetViewerClose}
+            onPrevious={() =>
+              setAssetViewer((v) =>
+                v && v.index > 0 ? { ...v, index: v.index - 1 } : v,
+              )
+            }
+            onNext={() =>
+              setAssetViewer((v) =>
+                v && v.index < v.photos.length - 1
+                  ? { ...v, index: v.index + 1 }
+                  : v,
+              )
+            }
+            onSelect={(index) =>
+              setAssetViewer((v) => (v ? { ...v, index } : v))
             }
           />
         ) : null}

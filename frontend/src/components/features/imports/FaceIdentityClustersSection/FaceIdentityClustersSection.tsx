@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { isAxiosError } from 'axios';
+import { X } from 'lucide-react';
 
 import {
   assignFaceIdentityNewPerson,
   assignFaceIdentityPerson,
   unassignFaceIdentityPerson,
+  unassignFacePerson,
   type IdentityAssignmentResponse,
   type ImportBatchFaceCluster,
 } from '../../../../api/faces';
@@ -19,6 +21,7 @@ interface FaceIdentityClustersSectionProps {
   batchId: string;
   clusters: ImportBatchFaceCluster[];
   onClusterUpdated: (updated: IdentityAssignmentResponse) => void;
+  onClustersRefresh: () => void | Promise<void>;
 }
 
 interface HoverPreview {
@@ -48,13 +51,18 @@ export default function FaceIdentityClustersSection({
   batchId,
   clusters,
   onClusterUpdated,
+  onClustersRefresh,
 }: FaceIdentityClustersSectionProps) {
   const [persons, setPersons] = useState<PersonListItem[]>([]);
   const [personsLoading, setPersonsLoading] = useState(false);
   const [mutatingByIdentityId, setMutatingByIdentityId] = useState<
     Record<string, boolean>
   >({});
+  const [mutatingByDetectionId, setMutatingByDetectionId] = useState<
+    Record<string, boolean>
+  >({});
   const [errorByIdentityId, setErrorByIdentityId] = useState<Record<string, string>>({});
+  const [errorByDetectionId, setErrorByDetectionId] = useState<Record<string, string>>({});
   const [hoverPreview, setHoverPreview] = useState<HoverPreview | null>(null);
   const loadedPersonsRef = useRef(false);
 
@@ -118,6 +126,36 @@ export default function FaceIdentityClustersSection({
     [loadPersons, onClusterUpdated],
   );
 
+  const handleRemoveFromCluster = useCallback(
+    async (detectionId: string) => {
+      if (mutatingByDetectionId[detectionId]) return;
+
+      setMutatingByDetectionId((prev) => ({ ...prev, [detectionId]: true }));
+      setErrorByDetectionId((prev) => {
+        const next = { ...prev };
+        delete next[detectionId];
+        return next;
+      });
+
+      try {
+        await unassignFacePerson(detectionId);
+        await onClustersRefresh();
+      } catch (error) {
+        setErrorByDetectionId((prev) => ({
+          ...prev,
+          [detectionId]: errorMessage(error, 'Не удалось убрать лицо из кластера'),
+        }));
+      } finally {
+        setMutatingByDetectionId((prev) => {
+          const next = { ...prev };
+          delete next[detectionId];
+          return next;
+        });
+      }
+    },
+    [mutatingByDetectionId, onClustersRefresh],
+  );
+
   const moveHoverPreview = useCallback((event: React.MouseEvent, src: string, label: string) => {
     const maxX = window.innerWidth - HOVER_PREVIEW_SIZE - HOVER_PREVIEW_OFFSET;
     const maxY = window.innerHeight - HOVER_PREVIEW_SIZE - HOVER_PREVIEW_OFFSET;
@@ -144,8 +182,6 @@ export default function FaceIdentityClustersSection({
         {sortedClusters.map((cluster) => {
           const mutating = Boolean(mutatingByIdentityId[cluster.identity_id]);
           const error = errorByIdentityId[cluster.identity_id];
-          const previewFaces = cluster.detections.slice(0, 6);
-          const moreCount = Math.max(0, cluster.detections_count - previewFaces.length);
 
           return (
             <article key={cluster.identity_id} className={styles.card}>
@@ -171,9 +207,12 @@ export default function FaceIdentityClustersSection({
                 </span>
               </div>
 
-              <div className={styles.faces} aria-label="Примеры лиц в кластере">
-                {previewFaces.map((face) =>
-                  face.crop_url ? (
+              <div className={styles.faces} aria-label="Лица в кластере">
+                {cluster.detections.map((face) => {
+                  const removing = Boolean(mutatingByDetectionId[face.id]);
+                  const removeError = errorByDetectionId[face.id];
+
+                  return face.crop_url ? (
                     <div key={face.id} className={styles.face}>
                       <img
                         src={face.crop_url}
@@ -196,10 +235,27 @@ export default function FaceIdentityClustersSection({
                         }
                         onMouseLeave={() => setHoverPreview(null)}
                       />
+                      <button
+                        type="button"
+                        className={styles.faceRemoveBtn}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleRemoveFromCluster(face.id);
+                        }}
+                        disabled={removing || mutating}
+                        title="Убрать из кластера"
+                        aria-label="Убрать лицо из кластера"
+                      >
+                        <X size={12} strokeWidth={2.5} aria-hidden />
+                      </button>
+                      {removeError ? (
+                        <span className={styles.faceRemoveError} title={removeError}>
+                          !
+                        </span>
+                      ) : null}
                     </div>
-                  ) : null,
-                )}
-                {moreCount > 0 ? <span className={styles.more}>+{moreCount}</span> : null}
+                  ) : null;
+                })}
               </div>
 
               <PersonPicker

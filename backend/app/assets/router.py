@@ -266,6 +266,29 @@ def _get_latest_versions_map(
     return {version.asset_id: version for version in versions}
 
 
+def _get_unassigned_faces_count_map(
+    db: Session,
+    asset_ids: list[uuid_mod.UUID],
+) -> dict[uuid_mod.UUID, int]:
+    if not asset_ids:
+        return {}
+
+    rows = (
+        db.query(
+            FaceDetection.asset_id,
+            func.count(FaceDetection.id),
+        )
+        .filter(
+            FaceDetection.asset_id.in_(asset_ids),
+            FaceDetection.review_required.is_(True),
+            FaceDetection.identity_id.is_(None),
+        )
+        .group_by(FaceDetection.asset_id)
+        .all()
+    )
+    return {asset_id: int(count) for asset_id, count in rows}
+
+
 def _normalize_tag(value: str) -> str | None:
     tag = SPACE_RE.sub(" ", value.strip())
     if not tag:
@@ -600,6 +623,7 @@ def list_assets(
         db,
         [version.id for version in latest_versions.values()],
     )
+    unassigned_faces_counts = _get_unassigned_faces_count_map(db, asset_ids)
 
     items: list[AssetListItemSchema] = []
     for asset in rows:
@@ -615,6 +639,7 @@ def list_assets(
                 import_batch_id=asset.import_batch_id,
                 duplicate_review_status=asset.duplicate_review_status,
                 duplicate_of_asset_id=asset.duplicate_of_asset_id,
+                unassigned_faces_count=unassigned_faces_counts.get(asset.id, 0),
                 version=(
                     _build_version_summary(
                         version,
@@ -723,6 +748,10 @@ def search_assets_semantic(
     rows = rows.order_by(distance.asc(), Asset.created_at.desc()).limit(limit).all()
     versions = [version for _, version in rows]
     version_files = _get_version_files_map(db, [version.id for version in versions])
+    unassigned_faces_counts = _get_unassigned_faces_count_map(
+        db,
+        [asset.id for asset, _ in rows],
+    )
 
     items = [
         AssetListItemSchema(
@@ -735,6 +764,7 @@ def search_assets_semantic(
             import_batch_id=asset.import_batch_id,
             duplicate_review_status=asset.duplicate_review_status,
             duplicate_of_asset_id=asset.duplicate_of_asset_id,
+            unassigned_faces_count=unassigned_faces_counts.get(asset.id, 0),
             version=_build_version_summary(
                 version,
                 version_files.get(version.id, {}),

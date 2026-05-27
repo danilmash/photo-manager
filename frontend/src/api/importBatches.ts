@@ -180,3 +180,39 @@ export async function getImportBatchTagSuggestions(
   );
   return data;
 }
+
+export interface ImportBatchReviewAssetItem {
+  asset_id: string;
+  title: string | null;
+  status: string;
+  preview_status: string;
+  faces_status: string;
+  review_faces_count: number;
+  preview_file_id: string | null;
+  preview_url: string | null;
+  created_at: string;
+}
+
+export interface ImportBatchReviewAssetsResponse {
+  items: ImportBatchReviewAssetItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function getImportBatchReviewAssets(
+  batchId: string,
+  params?: { limit?: number; offset?: number; unassigned_only?: boolean },
+): Promise<ImportBatchReviewAssetsResponse> {
+  const { data } = await api.get<ImportBatchReviewAssetsResponse>(
+    `/import-batches/${batchId}/review-assets`,
+    {
+      params: {
+        limit: params?.limit,
+        offset: params?.offset,
+        unassigned_only: params?.unassigned_only,
+      },
+    },
+  );
+  return data;
+}

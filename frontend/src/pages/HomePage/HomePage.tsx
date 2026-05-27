@@ -12,6 +12,7 @@ import PhotoStateBadge, {
   resolvePhotoStateBadgeVariant,
 } from '../../components/ui/PhotoStateBadge';
 import FacesErrorBadge from '../../components/ui/FacesErrorBadge';
+import FaceOutsideClusterBadge from '../../components/ui/FaceOutsideClusterBadge';
 import Modal from '../../components/ui/Modal';
 import PhotoViewer from '../../components/ui/PhotoViewer';
 import PersonsStrip from '../../components/ui/PersonsStrip';
@@ -419,6 +420,7 @@ export default function HomePage() {
                 const photoBadge = resolvePhotoStateBadgeVariant(item);
                 const facesFailed = item.version?.faces_status === 'failed';
                 const facesErrorMessage = item.version?.faces_error?.trim() || null;
+                const outsideCluster = (item.unassigned_faces_count ?? 0) > 0;
                 const isSelected = selectedAssetIds.has(item.asset_id);
                 const tileHandlers = getTileHandlers(item.asset_id, canOpen);
                 return (
@@ -440,7 +442,11 @@ export default function HomePage() {
                     }
                     aria-pressed={selectionActive ? isSelected : undefined}
                   >
-                    <div className={styles.tile}>
+                    <div
+                      className={`${styles.tile} ${
+                        outsideCluster ? styles['tile-outside-cluster'] : ''
+                      }`}
+                    >
                       {selectionActive ? (
                         <span
                           className={`${styles.selectionMark} ${isSelected ? styles.selectionMarkActive : ''}`}
@@ -468,6 +474,11 @@ export default function HomePage() {
                             <FacesErrorBadge
                               message={facesErrorMessage}
                               className={styles['faces-error-badge']}
+                            />
+                          )}
+                          {outsideCluster && (
+                            <FaceOutsideClusterBadge
+                              className={styles['outside-cluster-badge']}
                             />
                           )}
                         </>

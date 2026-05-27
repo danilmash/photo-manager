@@ -110,6 +110,7 @@ class AssetListItemSchema(BaseModel):
     import_batch_id: UUID | None = None
     duplicate_review_status: str | None = None
     duplicate_of_asset_id: UUID | None = None
+    unassigned_faces_count: int = 0
     version: AssetVersionSummarySchema | None
 
 

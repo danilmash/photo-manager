@@ -302,6 +302,17 @@
   z-index: 1;
 }
 
+.outside-cluster-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 1;
+}
+
+.tile-outside-cluster {
+  box-shadow: inset 0 0 0 2px #d97706;
+}
+
 .skeleton-badge {
   position: absolute;
   left: 8px;

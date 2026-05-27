@@ -72,6 +72,8 @@ export interface AssetListItem {
   import_batch_id?: string | null;
   duplicate_review_status?: string | null;
   duplicate_of_asset_id?: string | null;
+  /** Лица вне кластера (review_required, identity_id IS NULL). */
+  unassigned_faces_count?: number;
   /** Последняя версия по version_number; после загрузки обычно не null */
   version: AssetVersionSummary | null;
 }

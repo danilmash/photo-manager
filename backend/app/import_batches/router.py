@@ -340,6 +340,13 @@ def list_import_batch_review_assets(
     current_user: User = Depends(get_current_user),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    unassigned_only: bool = Query(
+        default=False,
+        description=(
+            "Только фото с лицами вне кластера "
+            "(review_required и identity_id IS NULL)"
+        ),
+    ),
 ):
     batch = db.query(ImportBatch).filter_by(id=batch_id).first()
     if not batch:
@@ -348,12 +355,16 @@ def list_import_batch_review_assets(
             detail="Партия импорта не найдена",
         )
 
+    review_face_conditions = [
+        FaceDetection.asset_id == Asset.id,
+        FaceDetection.review_required.is_(True),
+    ]
+    if unassigned_only:
+        review_face_conditions.append(FaceDetection.identity_id.is_(None))
+
     review_faces_count_sq = (
         select(func.count(FaceDetection.id))
-        .where(
-            FaceDetection.asset_id == Asset.id,
-            FaceDetection.review_required.is_(True),
-        )
+        .where(*review_face_conditions)
         .correlate(Asset)
         .scalar_subquery()
     )

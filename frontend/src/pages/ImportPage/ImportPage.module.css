@@ -326,6 +326,17 @@
   color: var(--color-danger, #c62828);
 }
 
+.reviewWarning {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, var(--color-border));
+}
+
 .empty {
   display: flex;
   flex-direction: column;

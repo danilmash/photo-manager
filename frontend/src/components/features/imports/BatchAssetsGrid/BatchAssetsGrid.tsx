@@ -1,6 +1,7 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 import type { AssetListItem, TaskStatus } from '../../../../api/assets';
+import FaceOutsideClusterBadge from '../../../ui/FaceOutsideClusterBadge';
 import FacesErrorBadge from '../../../ui/FacesErrorBadge';
 import PhotoStateBadge, {
   resolvePhotoStateBadgeVariant,
@@ -18,6 +19,7 @@ interface TileState {
   facesErrorMessage: string | null;
   canRetryFaces: boolean;
   clickable: boolean;
+  outsideCluster: boolean;
 }
 
 function isPreviewInFlight(status: TaskStatus): boolean {
@@ -28,6 +30,7 @@ function deriveTileState(
   asset: AssetListItem,
   hasClickHandler: boolean,
   canRetryFaces: boolean,
+  outsideCluster: boolean,
 ): TileState {
   const preview = asset.version?.preview_status ?? 'pending';
   const faces = asset.version?.faces_status ?? 'pending';
@@ -40,6 +43,7 @@ function deriveTileState(
       facesErrorMessage: null,
       canRetryFaces: false,
       clickable: false,
+      outsideCluster: false,
     };
   }
 
@@ -51,6 +55,7 @@ function deriveTileState(
       facesErrorMessage: null,
       canRetryFaces: false,
       clickable: false,
+      outsideCluster: false,
     };
   }
 
@@ -69,6 +74,7 @@ function deriveTileState(
     facesErrorMessage,
     canRetryFaces: canRetryFaces && facesFailed && !!asset.version?.id,
     clickable: hasClickHandler && hasThumb,
+    outsideCluster,
   };
 }
 
@@ -77,6 +83,8 @@ export interface BatchAssetsGridProps {
   onSelect?: (asset: AssetListItem) => void;
   onRetryFaces?: (asset: AssetListItem) => void;
   retryingAssetId?: string | null;
+  /** asset_id фото с лицами, исключёнными из кластера */
+  outsideClusterAssetIds?: ReadonlySet<string>;
   className?: string;
 }
 
@@ -85,6 +93,7 @@ export default function BatchAssetsGrid({
   onSelect,
   onRetryFaces,
   retryingAssetId = null,
+  outsideClusterAssetIds,
   className,
 }: BatchAssetsGridProps) {
   if (assets.length === 0) {
@@ -98,11 +107,21 @@ export default function BatchAssetsGrid({
   return (
     <ul className={`${styles.grid} ${className ?? ''}`}>
       {assets.map((asset) => {
-        const state = deriveTileState(asset, !!onSelect, !!onRetryFaces);
+        const outsideCluster = outsideClusterAssetIds?.has(asset.asset_id) ?? false;
+        const state = deriveTileState(
+          asset,
+          !!onSelect,
+          !!onRetryFaces,
+          outsideCluster,
+        );
         const isRetrying = retryingAssetId === asset.asset_id;
 
         const tile = (
-          <div className={styles.tile}>
+          <div
+            className={`${styles.tile} ${
+              state.outsideCluster ? styles['tile-outside-cluster'] : ''
+            }`}
+          >
             {state.variant === 'thumb' && asset.version?.thumbnail_url ? (
               <img
                 className={styles.img}
@@ -131,6 +150,11 @@ export default function BatchAssetsGrid({
                 variant={state.photoBadge}
                 className={styles['state-badge']}
                 size="sm"
+              />
+            )}
+            {state.outsideCluster && (
+              <FaceOutsideClusterBadge
+                className={styles['outside-cluster-badge']}
               />
             )}
             {state.showFacesError && (

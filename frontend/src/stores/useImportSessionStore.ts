@@ -15,6 +15,7 @@ import {
   createImportBatch,
   getImportBatch,
   getImportBatchDuplicateGroups,
+  getImportBatchReviewAssets,
   getImportBatchTagSuggestions,
   listImportBatches,
   retryBatchFailedFaces,
@@ -64,6 +65,10 @@ interface ImportSessionState {
   faceClustersLoadedByBatch: Record<string, boolean>;
   faceClustersFetchFailedByBatch: Record<string, boolean>;
   faceClustersByBatch: Record<string, ImportBatchFaceCluster[]>;
+  /** Фото партии с хотя бы одним лицом review_required (в т.ч. вне кластеров). */
+  reviewAssetsTotalByBatch: Record<string, number>;
+  /** Фото с лицами вне кластера (identity_id IS NULL, review_required). */
+  unassignedFaceAssetIdsByBatch: Record<string, string[]>;
   tagSuggestionsByBatch: Record<string, ImportBatchTagSuggestionsResponse>;
   tagSuggestionsLoadingByBatch: Record<string, boolean>;
   tagSuggestionsFetchFailedByBatch: Record<string, boolean>;
@@ -82,6 +87,8 @@ interface ImportSessionState {
   refreshBatch: (batchId: string) => Promise<ImportBatch | null>;
 
   fetchBatchAssets: (batchId: string) => Promise<void>;
+  fetchBatchFaceClusters: (batchId: string) => Promise<void>;
+  fetchBatchReviewAssetsTotal: (batchId: string) => Promise<void>;
   fetchBatchTagSuggestions: (batchId: string) => Promise<void>;
   applyTagsToBatch: (batchId: string, tags: string[]) => Promise<number>;
   startUploads: (batchId: string, files: File[]) => void;
@@ -214,6 +221,8 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
   faceClustersLoadedByBatch: {},
   faceClustersFetchFailedByBatch: {},
   faceClustersByBatch: {},
+  reviewAssetsTotalByBatch: {},
+  unassignedFaceAssetIdsByBatch: {},
   tagSuggestionsByBatch: {},
   tagSuggestionsLoadingByBatch: {},
   tagSuggestionsFetchFailedByBatch: {},
@@ -327,6 +336,58 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
           [batchId]: false,
         },
       }));
+    }
+  },
+
+  fetchBatchFaceClusters: async (batchId) => {
+    try {
+      const clusters = await getImportBatchFaceIdentityClusters(batchId);
+      set((state) => ({
+        faceClustersByBatch: { ...state.faceClustersByBatch, [batchId]: clusters },
+        faceClustersLoadedByBatch: {
+          ...state.faceClustersLoadedByBatch,
+          [batchId]: true,
+        },
+        faceClustersFetchFailedByBatch: {
+          ...state.faceClustersFetchFailedByBatch,
+          [batchId]: false,
+        },
+      }));
+    } catch {
+      set((state) => ({
+        faceClustersLoadedByBatch: {
+          ...state.faceClustersLoadedByBatch,
+          [batchId]: true,
+        },
+        faceClustersFetchFailedByBatch: {
+          ...state.faceClustersFetchFailedByBatch,
+          [batchId]: true,
+        },
+      }));
+    }
+  },
+
+  fetchBatchReviewAssetsTotal: async (batchId) => {
+    try {
+      const [totalRes, unassignedRes] = await Promise.all([
+        getImportBatchReviewAssets(batchId, { limit: 1 }),
+        getImportBatchReviewAssets(batchId, {
+          limit: 200,
+          unassigned_only: true,
+        }),
+      ]);
+      set((state) => ({
+        reviewAssetsTotalByBatch: {
+          ...state.reviewAssetsTotalByBatch,
+          [batchId]: totalRes.total,
+        },
+        unassignedFaceAssetIdsByBatch: {
+          ...state.unassignedFaceAssetIdsByBatch,
+          [batchId]: unassignedRes.items.map((item) => item.asset_id),
+        },
+      }));
+    } catch {
+      // Сохраняем последнее известное значение.
     }
   },
 
@@ -519,6 +580,8 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
         getImportBatch(batchId),
         getImportBatchDuplicateGroups(batchId),
         getImportBatchFaceIdentityClusters(batchId),
+        getImportBatchReviewAssets(batchId, { limit: 1 }),
+        getImportBatchReviewAssets(batchId, { limit: 200, unassigned_only: true }),
       ]);
 
       if (pollBatchId !== batchId) return;
@@ -527,6 +590,8 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
       const batchResult = settled[1];
       const dupResult = settled[2];
       const faceClustersResult = settled[3];
+      const reviewAssetsResult = settled[4];
+      const unassignedReviewAssetsResult = settled[5];
 
       if (assetsResult.status !== 'fulfilled' || batchResult.status !== 'fulfilled') {
         return;
@@ -559,6 +624,18 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
       } else if (faceClustersResult.status === 'rejected') {
         faceClustersLoaded = true;
         faceClustersFetchFailed = true;
+      }
+
+      let reviewAssetsTotal: number | undefined;
+      if (reviewAssetsResult.status === 'fulfilled') {
+        reviewAssetsTotal = reviewAssetsResult.value.total;
+      }
+
+      let unassignedFaceAssetIds: string[] | undefined;
+      if (unassignedReviewAssetsResult.status === 'fulfilled') {
+        unassignedFaceAssetIds = unassignedReviewAssetsResult.value.items.map(
+          (item) => item.asset_id,
+        );
       }
 
       set((state) => {
@@ -611,6 +688,20 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
                   [batchId]: faceClustersForBatch,
                 }
               : state.faceClustersByBatch,
+          reviewAssetsTotalByBatch:
+            reviewAssetsTotal !== undefined
+              ? {
+                  ...state.reviewAssetsTotalByBatch,
+                  [batchId]: reviewAssetsTotal,
+                }
+              : state.reviewAssetsTotalByBatch,
+          unassignedFaceAssetIdsByBatch:
+            unassignedFaceAssetIds !== undefined
+              ? {
+                  ...state.unassignedFaceAssetIdsByBatch,
+                  [batchId]: unassignedFaceAssetIds,
+                }
+              : state.unassignedFaceAssetIdsByBatch,
         };
       });
 

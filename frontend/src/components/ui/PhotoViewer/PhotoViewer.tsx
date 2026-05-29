@@ -15,7 +15,9 @@ import {
   Copy,
   Info,
   Maximize2,
+  RotateCcw,
   SlidersHorizontal,
+  Trash2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -53,11 +55,15 @@ import type { ViewportMetrics } from './viewportMath';
 interface PhotoViewerProps {
   photos: AssetListItem[];
   currentIndex: number;
+  lifecycleMode?: 'active' | 'trashed';
   onPrevious: () => void;
   onNext: () => void;
   onSelect: (index: number) => void;
   onClose: () => void;
   onFoldersChanged?: () => void;
+  onTrashAsset?: (assetId: string) => Promise<void> | void;
+  onRestoreAsset?: (assetId: string) => Promise<void> | void;
+  onPermanentlyDeleteAsset?: (assetId: string) => Promise<void> | void;
   /**
    * Режим импорта: карусель — все источники дубликатов в партии; кандидаты и вердикты — в дровере.
    */
@@ -148,11 +154,15 @@ function normalizeTagsFromValues(values: string[]): string[] {
 export default function PhotoViewer({
   photos,
   currentIndex,
+  lifecycleMode = 'active',
   onPrevious,
   onNext,
   onSelect,
   onClose,
   onFoldersChanged,
+  onTrashAsset,
+  onRestoreAsset,
+  onPermanentlyDeleteAsset,
   importDuplicateSourcesReview,
 }: PhotoViewerProps) {
   const [direction, setDirection] = useState<Direction>(1);
@@ -183,9 +193,11 @@ export default function PhotoViewer({
   const [compareSrc, setCompareSrc] = useState('');
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareLabel, setCompareLabel] = useState('');
+  const [assetActionLoading, setAssetActionLoading] = useState(false);
 
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
-  const isEditing = editDrawerOpen;
+  const isTrashMode = lifecycleMode === 'trashed';
+  const isEditing = !isTrashMode && editDrawerOpen;
 
   const prevIndexRef = useRef(currentIndex);
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -330,6 +342,13 @@ export default function PhotoViewer({
     setDuplicatesDrawerOpen(false);
   }, [currentPhoto?.asset_id]);
 
+  useEffect(() => {
+    if (!isTrashMode) return;
+    setEditDrawerOpen(false);
+    setDuplicatesDrawerOpen(false);
+    setImportDupDrawerOpen(false);
+  }, [isTrashMode]);
+
   const currentImportDupGroup = useMemo(() => {
     if (!importDuplicateSourcesReview) return null;
     return importDuplicateSourcesReview.groups[currentIndex] ?? null;
@@ -342,9 +361,12 @@ export default function PhotoViewer({
   const duplicateOfId =
     currentViewer?.duplicate_of_asset_id ?? currentPhoto?.duplicate_of_asset_id ?? null;
   const showDuplicatesEntry =
+    !isTrashMode &&
     !importDuplicateSourcesReview &&
     Boolean(duplicateBatchId) &&
-    (duplicateReviewStatus === 'has_duplicates' || duplicateOfId != null);
+    (duplicateReviewStatus === 'has_duplicates' ||
+      duplicateReviewStatus === 'reviewed' ||
+      duplicateOfId != null);
 
   const moveDrawerPaddingOpen =
     infoDrawerOpen ||
@@ -640,6 +662,51 @@ export default function PhotoViewer({
     onNext();
   };
 
+  const handleTrashCurrent = async () => {
+    if (!currentPhoto || !onTrashAsset || assetActionLoading) return;
+    const confirmed = window.confirm('Переместить фото в корзину?');
+    if (!confirmed) return;
+
+    setAssetActionLoading(true);
+    try {
+      await onTrashAsset(currentPhoto.asset_id);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Не удалось переместить фото в корзину');
+    } finally {
+      setAssetActionLoading(false);
+    }
+  };
+
+  const handleRestoreCurrent = async () => {
+    if (!currentPhoto || !onRestoreAsset || assetActionLoading) return;
+
+    setAssetActionLoading(true);
+    try {
+      await onRestoreAsset(currentPhoto.asset_id);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Не удалось восстановить фото');
+    } finally {
+      setAssetActionLoading(false);
+    }
+  };
+
+  const handlePermanentlyDeleteCurrent = async () => {
+    if (!currentPhoto || !onPermanentlyDeleteAsset || assetActionLoading) return;
+    const confirmed = window.confirm(
+      'Удалить фото окончательно? Это действие нельзя отменить.',
+    );
+    if (!confirmed) return;
+
+    setAssetActionLoading(true);
+    try {
+      await onPermanentlyDeleteAsset(currentPhoto.asset_id);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Не удалось удалить фото');
+    } finally {
+      setAssetActionLoading(false);
+    }
+  };
+
   const handleSelect = (index: number) => {
     setDirection(index > currentIndex ? 1 : -1);
     onSelect(index);
@@ -827,6 +894,51 @@ export default function PhotoViewer({
                 size="xl"
                 aria-label="Информация"
               />
+              {isTrashMode ? (
+                <>
+                  {onRestoreAsset ? (
+                    <Button
+                      color="muted"
+                      variant="ghost"
+                      className={chromeButtonClass}
+                      onClick={() => {
+                        void handleRestoreCurrent();
+                      }}
+                      icon={<RotateCcw />}
+                      size="xl"
+                      disabled={assetActionLoading}
+                      aria-label="Восстановить"
+                    />
+                  ) : null}
+                  {onPermanentlyDeleteAsset ? (
+                    <Button
+                      color="muted"
+                      variant="ghost"
+                      className={chromeButtonClass}
+                      onClick={() => {
+                        void handlePermanentlyDeleteCurrent();
+                      }}
+                      icon={<Trash2 />}
+                      size="xl"
+                      disabled={assetActionLoading}
+                      aria-label="Удалить окончательно"
+                    />
+                  ) : null}
+                </>
+              ) : onTrashAsset ? (
+                <Button
+                  color="muted"
+                  variant="ghost"
+                  className={chromeButtonClass}
+                  onClick={() => {
+                    void handleTrashCurrent();
+                  }}
+                  icon={<Trash2 />}
+                  size="xl"
+                  disabled={assetActionLoading}
+                  aria-label="Переместить в корзину"
+                />
+              ) : null}
               {importDuplicateSourcesReview ? (
                 <Button
                   color="muted"
@@ -857,15 +969,17 @@ export default function PhotoViewer({
                   aria-label="Дубликаты и похожие"
                 />
               ) : null}
-              <Button
-                color="muted"
-                variant="ghost"
-                className={chromeButtonClass}
-                onClick={handleOpenEdit}
-                icon={<SlidersHorizontal />}
-                size="xl"
-                aria-label="Редактирование"
-              />
+              {!isTrashMode ? (
+                <Button
+                  color="muted"
+                  variant="ghost"
+                  className={chromeButtonClass}
+                  onClick={handleOpenEdit}
+                  icon={<SlidersHorizontal />}
+                  size="xl"
+                  aria-label="Редактирование"
+                />
+              ) : null}
             </>
           ) : null}
         </div>
@@ -963,7 +1077,7 @@ export default function PhotoViewer({
                         value={tagDraft}
                         onChange={(event) => setTagDraft(event.target.value)}
                         placeholder="Новый тег"
-                        disabled={!currentViewer.version || tagSaving}
+                        disabled={isTrashMode || !currentViewer.version || tagSaving}
                         style={{
                           minWidth: 0,
                           flex: 1,
@@ -979,7 +1093,9 @@ export default function PhotoViewer({
                       <Button
                         color="primary"
                         size="sm"
-                        disabled={!currentViewer.version || tagSaving || !tagDraft.trim()}
+                        disabled={
+                          isTrashMode || !currentViewer.version || tagSaving || !tagDraft.trim()
+                        }
                       >
                         {tagSaving ? '...' : 'Добавить'}
                       </Button>
@@ -996,9 +1112,13 @@ export default function PhotoViewer({
                         {currentViewer.photo.keywords.map((tag) => (
                           <Chip
                             key={tag}
-                            onRemove={() => {
-                              void handleRemoveTag(tag);
-                            }}
+                            onRemove={
+                              isTrashMode
+                                ? undefined
+                                : () => {
+                                    void handleRemoveTag(tag);
+                                  }
+                            }
                             title="Удалить тег"
                           >
                             {tag}
@@ -1014,31 +1134,35 @@ export default function PhotoViewer({
                   </form>
                 </section>
 
-                <section style={{ display: 'grid', gap: 10 }}>
-                  <h3 style={{ margin: 0, fontSize: 16 }}>Папки</h3>
-                  <PhotoAssetFoldersPanel
-                    assetId={currentViewer.id}
-                    open={infoDrawerOpen}
-                    onChanged={onFoldersChanged}
-                  />
-                </section>
+                {!isTrashMode ? (
+                  <>
+                    <section style={{ display: 'grid', gap: 10 }}>
+                      <h3 style={{ margin: 0, fontSize: 16 }}>Папки</h3>
+                      <PhotoAssetFoldersPanel
+                        assetId={currentViewer.id}
+                        open={infoDrawerOpen}
+                        onChanged={onFoldersChanged}
+                      />
+                    </section>
 
-                <section style={{ display: 'grid', gap: 10 }}>
-                  <h3 style={{ margin: 0, fontSize: 16 }}>
-                    Лица ({currentViewer.faces_count})
-                  </h3>
+                    <section style={{ display: 'grid', gap: 10 }}>
+                      <h3 style={{ margin: 0, fontSize: 16 }}>
+                        Лица ({currentViewer.faces_count})
+                      </h3>
 
-                  <PhotoFacesPanel
-                    assetId={currentViewer.id}
-                    open={infoDrawerOpen}
-                    faces={currentViewer.faces}
-                    activeFaceId={activeFaceId}
-                    onActiveFaceChange={setActiveFaceId}
-                    onFacesReload={(assetId) =>
-                      loadAssetViewer(assetId, true).then(() => undefined)
-                    }
-                  />
-                </section>
+                      <PhotoFacesPanel
+                        assetId={currentViewer.id}
+                        open={infoDrawerOpen}
+                        faces={currentViewer.faces}
+                        activeFaceId={activeFaceId}
+                        onActiveFaceChange={setActiveFaceId}
+                        onFacesReload={(assetId) =>
+                          loadAssetViewer(assetId, true).then(() => undefined)
+                        }
+                      />
+                    </section>
+                  </>
+                ) : null}
               </>
             ) : (
               <div>Нет данных</div>

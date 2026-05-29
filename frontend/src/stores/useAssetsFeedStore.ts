@@ -49,6 +49,7 @@ interface AssetsFeedStore {
   loadMore: () => Promise<void>;
   search: (query: string) => Promise<void>;
   clearSearch: () => Promise<void>;
+  removeItem: (assetId: string) => void;
 }
 
 function mergeUniqueByAssetId(prev: AssetListItem[], next: AssetListItem[]): AssetListItem[] {
@@ -269,5 +270,11 @@ export const useAssetsFeedStore = create<AssetsFeedStore>((set, get) => ({
 
   clearSearch: async () => {
     await get().loadInitial();
+  },
+
+  removeItem: (assetId) => {
+    set((state) => ({
+      items: state.items.filter((item) => item.asset_id !== assetId),
+    }));
   },
 }));

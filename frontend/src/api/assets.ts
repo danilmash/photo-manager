@@ -17,6 +17,8 @@ export type TaskStatus =
   | 'failed'
   | string;
 
+export type AssetLifecycle = 'active' | 'trashed' | 'all';
+
 /** Последняя (или запрошенная) версия ассета — те же поля, что и в AssetViewer.version */
 export interface AssetVersionSummary {
   id: string;
@@ -69,6 +71,8 @@ export interface AssetListItem {
   title: string | null;
   created_at: string;
   updated_at: string;
+  lifecycle_status: AssetLifecycle | string;
+  trashed_at?: string | null;
   import_batch_id?: string | null;
   duplicate_review_status?: string | null;
   duplicate_of_asset_id?: string | null;
@@ -111,6 +115,7 @@ export async function listAssets(params?: {
   batchId?: string | null;
   folderId?: string | null;
   personId?: string | null;
+  lifecycle?: AssetLifecycle;
   filters?: AssetFilters;
 }): Promise<AssetListResponse> {
   const { data } = await api.get<AssetListResponse>('/assets', {
@@ -120,6 +125,7 @@ export async function listAssets(params?: {
       batch_id: params?.batchId ?? undefined,
       folder_id: params?.folderId ?? undefined,
       person_id: params?.personId ?? undefined,
+      lifecycle: params?.lifecycle,
       ...buildFilterParams(params?.filters),
     },
   });
@@ -234,6 +240,8 @@ export interface AssetViewer {
   title: string | null;
   created_at: string;
   updated_at: string | null;
+  lifecycle_status: AssetLifecycle | string;
+  trashed_at?: string | null;
   version: AssetVersionSummary | null;
   photo: AssetPhotoInfo;
   faces: AssetViewerFace[];
@@ -247,6 +255,32 @@ export interface AssetViewer {
 export async function getAssetViewer(assetId: string): Promise<AssetViewer> {
   const { data } = await api.get<AssetViewer>(`/assets/${assetId}`);
   return data;
+}
+
+export interface AssetLifecycleResponse {
+  asset_id: string;
+  lifecycle_status: AssetLifecycle | string;
+  trashed_at: string | null;
+}
+
+export async function trashAsset(assetId: string): Promise<AssetLifecycleResponse> {
+  const { data } = await api.post<AssetLifecycleResponse>(`/assets/${assetId}/trash`);
+  return data;
+}
+
+export async function restoreAsset(assetId: string): Promise<AssetLifecycleResponse> {
+  const { data } = await api.post<AssetLifecycleResponse>(
+    `/assets/${assetId}/restore`,
+  );
+  return data;
+}
+
+export async function permanentlyDeleteAsset(assetId: string): Promise<void> {
+  await api.delete(`/assets/${assetId}`);
+}
+
+export async function emptyTrash(): Promise<void> {
+  await api.delete('/assets/trash');
 }
 
 export interface AssetVersionJobResponse {

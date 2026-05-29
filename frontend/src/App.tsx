@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage';
 import SettingsPage from './pages/SettingsPage';
 import ImportPage from './pages/ImportPage';
 import AdminUsersPage from './pages/AdminUsersPage';
+import TrashPage from './pages/TrashPage';
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="folders/:folderId" element={<HomePage />} />
           <Route path="import" element={<ImportPage />} />
           <Route path="import/:batchId" element={<ImportPage />} />
+          <Route path="trash" element={<TrashPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="admin/users" element={<AdminUsersPage />} />
         </Route>

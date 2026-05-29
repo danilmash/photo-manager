@@ -92,6 +92,8 @@ export function duplicateGroupToCarouselPhotos(
         title,
         created_at: now,
         updated_at: now,
+        lifecycle_status: 'active',
+        trashed_at: null,
         version: syntheticVersion(fallbackPreview, assetId),
       };
     }

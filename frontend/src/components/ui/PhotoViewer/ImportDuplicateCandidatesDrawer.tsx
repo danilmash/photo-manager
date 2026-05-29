@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type {
   DuplicateReviewDecision,
@@ -6,6 +6,7 @@ import type {
   ImportBatchDuplicateGroup,
 } from '../../../api/importBatches';
 import { reviewImportBatchDuplicateCandidate } from '../../../api/importBatches';
+import { getAssetViewer, restoreAsset } from '../../../api/assets';
 import Button from '../Button';
 import Drawer from '../Drawer';
 import { duplicateTypeLabel } from './duplicatePeers';
@@ -50,6 +51,9 @@ interface CandidateVerdictRowProps {
   onBusy: (id: string | null, decision: DuplicateReviewDecision | null) => void;
   onCandidateReviewed: (updated: ImportBatchDuplicateCandidateItem) => void;
   onCompareSelect?: (assetId: string) => void;
+  lifecycleStatus?: string | null;
+  isRestoring: boolean;
+  onRestore?: (assetId: string) => void;
 }
 
 function CandidateVerdictRow({
@@ -60,6 +64,9 @@ function CandidateVerdictRow({
   onBusy,
   onCandidateReviewed,
   onCompareSelect,
+  lifecycleStatus,
+  isRestoring,
+  onRestore,
 }: CandidateVerdictRowProps) {
   const [error, setError] = useState<string | null>(null);
 
@@ -84,6 +91,7 @@ function CandidateVerdictRow({
   );
 
   const busy = busyCandidateId === candidate.id;
+  const isTrashed = lifecycleStatus === 'trashed';
 
   return (
     <li className={styles.row}>
@@ -114,6 +122,11 @@ function CandidateVerdictRow({
             <span className={styles.undecided}>Без решения</span>
           )}
         </div>
+        {isTrashed ? (
+          <div className={styles.trashNotice}>
+            Фото находится в корзине. Его можно сравнить или восстановить.
+          </div>
+        ) : null}
         <div className={styles.actions}>
           {onCompareSelect ? (
             <Button
@@ -124,6 +137,17 @@ function CandidateVerdictRow({
               onClick={() => onCompareSelect(candidate.candidate_asset_id)}
             >
               Сравнить
+            </Button>
+          ) : null}
+          {isTrashed && onRestore ? (
+            <Button
+              color="primary"
+              variant="filled"
+              size="sm"
+              disabled={busyCandidateId !== null || isRestoring}
+              onClick={() => onRestore(candidate.candidate_asset_id)}
+            >
+              {isRestoring ? '…' : 'Восстановить'}
             </Button>
           ) : null}
           <Button
@@ -177,11 +201,56 @@ export default function ImportDuplicateCandidatesDrawer({
 
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
   const [busyDecision, setBusyDecision] = useState<DuplicateReviewDecision | null>(null);
+  const [lifecycleByAssetId, setLifecycleByAssetId] = useState<Record<string, string>>({});
+  const [restoringAssetId, setRestoringAssetId] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const setBusy = useCallback((id: string | null, decision: DuplicateReviewDecision | null) => {
     setBusyCandidateId(id);
     setBusyDecision(decision);
   }, []);
+
+  useEffect(() => {
+    if (!open || sorted.length === 0) return;
+    const missing = sorted.filter((candidate) => !lifecycleByAssetId[candidate.candidate_asset_id]);
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      const lifecycles: Record<string, string> = {};
+      await Promise.all(
+        missing.map(async (candidate) => {
+          try {
+            const viewer = await getAssetViewer(candidate.candidate_asset_id);
+            lifecycles[candidate.candidate_asset_id] = viewer.lifecycle_status;
+          } catch {
+            /* ignore */
+          }
+        }),
+      );
+      if (!cancelled && Object.keys(lifecycles).length > 0) {
+        setLifecycleByAssetId((prev) => ({ ...prev, ...lifecycles }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lifecycleByAssetId, open, sorted]);
+
+  const handleRestore = useCallback(async (assetId: string) => {
+    if (restoringAssetId) return;
+    setRestoreError(null);
+    setRestoringAssetId(assetId);
+    try {
+      await restoreAsset(assetId);
+      setLifecycleByAssetId((prev) => ({ ...prev, [assetId]: 'active' }));
+    } catch {
+      setRestoreError('Не удалось восстановить фото из корзины');
+    } finally {
+      setRestoringAssetId(null);
+    }
+  }, [restoringAssetId]);
 
   const sourceTitle = (group.source_title ?? '').trim();
   const title =
@@ -201,6 +270,7 @@ export default function ImportDuplicateCandidatesDrawer({
         <p className={styles.lead}>
           Сравните с фото на экране и вынесите вердикт по каждому кандидату.
         </p>
+        {restoreError ? <p className={styles.rowError}>{restoreError}</p> : null}
         {sorted.length === 0 ? (
           <p className={styles.empty}>Для этого источника нет кандидатов.</p>
         ) : (
@@ -215,6 +285,9 @@ export default function ImportDuplicateCandidatesDrawer({
                 onBusy={setBusy}
                 onCandidateReviewed={onCandidateReviewed}
                 onCompareSelect={onCompareSelect}
+                lifecycleStatus={lifecycleByAssetId[c.candidate_asset_id] ?? null}
+                isRestoring={restoringAssetId === c.candidate_asset_id}
+                onRestore={handleRestore}
               />
             ))}
           </ul>

@@ -182,6 +182,8 @@ class AssetViewerResponseSchema(BaseModel):
     title: str | None
     created_at: datetime
     updated_at: datetime | None = None
+    lifecycle_status: str
+    trashed_at: datetime | None = None
     version: AssetVersionSummarySchema | None
     photo: AssetPhotoInfoSchema
     faces: list[AssetViewerFaceSchema]

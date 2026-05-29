@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Menu, RefreshCw } from 'lucide-react';
 
-import type { AssetListItem } from '../../api/assets';
+import { trashAsset, type AssetListItem } from '../../api/assets';
 import BatchAssetsGrid from '../../components/features/imports/BatchAssetsGrid';
 import DuplicateSourcesSection, {
   duplicateSourcesToCarouselPhotos,
@@ -70,6 +70,17 @@ function useIsDesktop(): boolean {
   }, []);
 
   return isDesktop;
+}
+
+function removeAssetFromViewerState<T extends { photos: AssetListItem[]; index: number }>(
+  viewer: T | null,
+  assetId: string,
+): T | null {
+  if (!viewer) return viewer;
+  const photos = viewer.photos.filter((item) => item.asset_id !== assetId);
+  if (photos.length === viewer.photos.length) return viewer;
+  if (photos.length === 0) return null;
+  return { ...viewer, photos, index: Math.min(viewer.index, photos.length - 1) };
 }
 
 export default function ImportPage() {
@@ -509,6 +520,20 @@ export default function ImportPage() {
     }
   }, [batchId, fetchBatchReviewAssetsTotal]);
 
+  const handleTrashAsset = useCallback(
+    async (assetId: string) => {
+      await trashAsset(assetId);
+      setAssetViewer((viewer) => removeAssetFromViewerState(viewer, assetId));
+      setDupClusterViewer((viewer) => removeAssetFromViewerState(viewer, assetId));
+      if (!batchId) return;
+      await Promise.all([
+        fetchBatchAssets(batchId),
+        fetchBatchReviewAssetsTotal(batchId),
+      ]);
+    },
+    [batchId, fetchBatchAssets, fetchBatchReviewAssetsTotal],
+  );
+
   const handleApplyBatchTags = useCallback(
     async (tags: string[]) => {
       if (!batchId) return 0;
@@ -913,6 +938,7 @@ export default function ImportPage() {
             onSelect={(index) =>
               setDupClusterViewer((v) => (v ? { ...v, index } : v))
             }
+            onTrashAsset={handleTrashAsset}
           />
         ) : null}
       </Modal>
@@ -943,6 +969,7 @@ export default function ImportPage() {
             onSelect={(index) =>
               setAssetViewer((v) => (v ? { ...v, index } : v))
             }
+            onTrashAsset={handleTrashAsset}
           />
         ) : null}
       </Modal>

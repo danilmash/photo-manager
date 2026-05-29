@@ -96,6 +96,15 @@
   line-height: 1.35;
 }
 
+.trashNotice {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger, #c62828);
+  line-height: 1.35;
+}
+
 .actions {
   margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }

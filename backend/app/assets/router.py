@@ -19,6 +19,7 @@ from app.assets.models import (
     TASK_STATUS_PENDING,
     VERSION_STATUS_UPLOADED,
     Asset,
+    AssetDuplicateCandidate,
     AssetVersion,
     File as AssetFileModel,
     apply_version_status,
@@ -126,6 +127,17 @@ def _require_trashed_lifecycle(asset: Asset) -> None:
         )
 
 
+def _require_readable_lifecycle(asset: Asset) -> None:
+    if asset.lifecycle_status not in (
+        ASSET_LIFECYCLE_ACTIVE,
+        ASSET_LIFECYCLE_TRASHED,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Операция недоступна для текущего состояния ассета",
+        )
+
+
 def _collect_asset_relative_paths(db: Session, asset_id: uuid_mod.UUID) -> list[str]:
     paths: list[str] = []
     for (p,) in db.query(AssetFileModel.path).filter_by(asset_id=asset_id).all():
@@ -158,6 +170,17 @@ def _unlink_asset_rel_paths(rel_paths: list[str]) -> None:
                 full.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _prepare_asset_hard_delete(db: Session, asset_id: uuid_mod.UUID) -> None:
+    db.query(AssetDuplicateCandidate).filter(
+        (AssetDuplicateCandidate.source_asset_id == asset_id)
+        | (AssetDuplicateCandidate.candidate_asset_id == asset_id),
+    ).delete(synchronize_session=False)
+    db.query(Asset).filter(Asset.duplicate_of_asset_id == asset_id).update(
+        {Asset.duplicate_of_asset_id: None},
+        synchronize_session=False,
+    )
 
 
 def _get_original_file(db: Session, asset_id: uuid_mod.UUID) -> AssetFileModel | None:
@@ -597,7 +620,12 @@ def list_assets(
     )
     if person_id is not None:
         q = apply_person_filter(q, db, person_id=person_id)
-    q = q.order_by(Asset.created_at.desc(), Asset.id.desc())
+    sort_timestamp = (
+        func.coalesce(Asset.trashed_at, Asset.created_at)
+        if lifecycle == "trashed"
+        else Asset.created_at
+    )
+    q = q.order_by(sort_timestamp.desc(), Asset.id.desc())
 
     if cursor:
         try:
@@ -609,8 +637,8 @@ def list_assets(
             )
 
         q = q.filter(
-            (Asset.created_at < c_created_at)
-            | ((Asset.created_at == c_created_at) & (Asset.id < c_asset_id))
+            (sort_timestamp < c_created_at)
+            | ((sort_timestamp == c_created_at) & (Asset.id < c_asset_id))
         )
 
     rows = q.limit(limit + 1).all()
@@ -654,7 +682,12 @@ def list_assets(
     next_cursor = None
     if has_more and rows:
         last_row = rows[-1]
-        next_cursor = _encode_cursor(last_row.created_at, last_row.id)
+        cursor_timestamp = (
+            last_row.trashed_at or last_row.created_at
+            if lifecycle == "trashed"
+            else last_row.created_at
+        )
+        next_cursor = _encode_cursor(cursor_timestamp, last_row.id)
 
     return AssetListResponseSchema(items=items, next_cursor=next_cursor)
 
@@ -794,7 +827,7 @@ def get_asset_file(
             detail="Файл не найден",
         )
     f, asset = row
-    _require_active_lifecycle(asset)
+    _require_readable_lifecycle(asset)
 
     path = Path(settings.storage_root) / f.path
     if not path.exists():
@@ -927,7 +960,7 @@ def get_asset_viewer(
     current_user: User = Depends(get_current_user),
 ):
     asset = _require_asset(db, asset_id)
-    _require_active_lifecycle(asset)
+    _require_readable_lifecycle(asset)
     version = _get_version_or_404(
         db,
         asset_id,
@@ -1005,6 +1038,8 @@ def get_asset_viewer(
         title=asset.title,
         created_at=asset.created_at,
         updated_at=asset.updated_at,
+        lifecycle_status=asset.lifecycle_status,
+        trashed_at=asset.trashed_at,
         version=_build_version_summary(version, version_files),
         photo=_build_photo_info(version, original),
         faces=faces,
@@ -1179,6 +1214,26 @@ def trash_asset(
     )
 
 
+@router.post("/{asset_id}/restore", response_model=AssetLifecycleResponseSchema)
+def restore_asset(
+    asset_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _require_asset(db, asset_id)
+    _require_trashed_lifecycle(asset)
+    asset.lifecycle_status = ASSET_LIFECYCLE_ACTIVE
+    asset.trashed_at = None
+    asset.trashed_by_user_id = None
+    db.commit()
+    db.refresh(asset)
+    return AssetLifecycleResponseSchema(
+        asset_id=asset.id,
+        lifecycle_status=asset.lifecycle_status,
+        trashed_at=asset.trashed_at,
+    )
+
+
 @router.get("/{asset_id}/folders", response_model=AssetFoldersResponseSchema)
 def get_asset_folders(
     asset_id: uuid_mod.UUID,
@@ -1279,6 +1334,29 @@ def remove_asset_from_folder(
     return AssetFoldersResponseSchema(asset_id=asset_id, folders=folders)
 
 
+@router.delete("/trash", status_code=status.HTTP_204_NO_CONTENT)
+def empty_trash(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    assets = (
+        db.query(Asset)
+        .filter(
+            Asset.owner_id == current_user.id,
+            Asset.lifecycle_status == ASSET_LIFECYCLE_TRASHED,
+        )
+        .all()
+    )
+    paths: list[str] = []
+    for asset in assets:
+        paths.extend(_collect_asset_relative_paths(db, asset.id))
+        _prepare_asset_hard_delete(db, asset.id)
+        db.delete(asset)
+    db.commit()
+    _unlink_asset_rel_paths(paths)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def permanently_delete_asset(
     asset_id: uuid_mod.UUID,
@@ -1288,6 +1366,7 @@ def permanently_delete_asset(
     asset = _require_asset(db, asset_id)
     _require_trashed_lifecycle(asset)
     paths = _collect_asset_relative_paths(db, asset.id)
+    _prepare_asset_hard_delete(db, asset.id)
     db.delete(asset)
     db.commit()
     _unlink_asset_rel_paths(paths)

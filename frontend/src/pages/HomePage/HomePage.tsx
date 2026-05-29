@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Menu, Upload, X } from 'lucide-react';
+import { Download, Menu, Trash2, Upload, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import pageLayout from '../../styles/page-layout.module.css';
 import styles from './HomePage.module.css';
 import { useAssetsFeedStore } from '../../stores/useAssetsFeedStore';
 import { useFoldersStore } from '../../stores/useFoldersStore';
-import type { AssetListItem } from '../../api/assets';
+import { trashAsset, type AssetListItem } from '../../api/assets';
 import type { FolderSummary } from '../../api/folders';
 import Button from '../../components/ui/Button';
 import PhotoStateBadge, {
@@ -70,6 +70,7 @@ export default function HomePage() {
     loadMore,
     search,
     clearSearch,
+    removeItem,
   } = useAssetsFeedStore();
 
   const folders = useFoldersStore((s) => s.items);
@@ -198,6 +199,17 @@ export default function HomePage() {
     }
   }, [fetchFolders, folderId, loadInitial, selectedAssetId]);
 
+  const handleTrashAsset = useCallback(
+    async (assetId: string) => {
+      await trashAsset(assetId);
+      const index = items.findIndex((item) => item.asset_id === assetId);
+      const nextItem = items[index + 1] ?? items[index - 1] ?? null;
+      removeItem(assetId);
+      setSelectedAssetId(nextItem?.asset_id ?? null);
+    },
+    [items, removeItem],
+  );
+
   const selectableAssetIds = useMemo(
     () => tiles.filter((item) => canShowLibraryThumb(item)).map((item) => item.asset_id),
     [tiles],
@@ -221,6 +233,28 @@ export default function HomePage() {
     selectableIds: selectableAssetIds,
     onOpenAsset: openAsset,
   });
+
+  const handleTrashSelected = useCallback(async () => {
+    const assetIds = Array.from(selectedAssetIds);
+    if (assetIds.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Переместить выбранные фото в корзину? Количество: ${assetIds.length}.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      await Promise.all(assetIds.map((assetId) => trashAsset(assetId)));
+      for (const assetId of assetIds) {
+        removeItem(assetId);
+      }
+      clearSelection();
+      exitSelection();
+      setSelectedAssetId(null);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Не удалось переместить фото в корзину');
+    }
+  }, [clearSelection, exitSelection, removeItem, selectedAssetIds]);
 
   const handleExportSelected = useCallback(async () => {
     const assetIds = Array.from(selectedAssetIds);
@@ -538,6 +572,7 @@ export default function HomePage() {
               onFoldersChanged={() => {
                 void handleFoldersChanged();
               }}
+              onTrashAsset={handleTrashAsset}
             />
           </Modal>
         </div>
@@ -569,6 +604,18 @@ export default function HomePage() {
               }}
             >
               Экспорт
+            </Button>
+            <Button
+              color="secondary"
+              variant="outline"
+              size="m"
+              icon={<Trash2 />}
+              disabled={selectedCount === 0}
+              onClick={() => {
+                void handleTrashSelected();
+              }}
+            >
+              В корзину
             </Button>
             <Button
               color="secondary"

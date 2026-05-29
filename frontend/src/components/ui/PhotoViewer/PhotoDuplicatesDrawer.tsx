@@ -4,7 +4,7 @@ import {
   getImportBatchDuplicateGroups,
   type ImportBatchDuplicateGroup,
 } from '../../../api/importBatches';
-import { getAssetViewer } from '../../../api/assets';
+import { getAssetViewer, restoreAsset } from '../../../api/assets';
 import Button from '../Button';
 import Drawer from '../Drawer';
 import {
@@ -46,6 +46,8 @@ export default function PhotoDuplicatesDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [thumbByAssetId, setThumbByAssetId] = useState<Record<string, string>>({});
+  const [lifecycleByAssetId, setLifecycleByAssetId] = useState<Record<string, string>>({});
+  const [restoringAssetId, setRestoringAssetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !importBatchId || !assetId) return;
@@ -82,12 +84,15 @@ export default function PhotoDuplicatesDrawer({
 
   useEffect(() => {
     if (!open) return;
-    const missing = peers.filter((p) => !p.preview_url && p.asset_id);
+    const missing = peers.filter(
+      (p) => p.asset_id && (!p.preview_url || !lifecycleByAssetId[p.asset_id]),
+    );
     if (missing.length === 0) return;
 
     let cancelled = false;
     void (async () => {
       const entries: Record<string, string> = {};
+      const lifecycles: Record<string, string> = {};
       await Promise.all(
         missing.map(async (p) => {
           try {
@@ -97,20 +102,26 @@ export default function PhotoDuplicatesDrawer({
               v.version?.thumbnail_url ||
               '';
             if (url) entries[p.asset_id] = url;
+            lifecycles[p.asset_id] = v.lifecycle_status;
           } catch {
             /* ignore */
           }
         }),
       );
-      if (!cancelled && Object.keys(entries).length > 0) {
-        setThumbByAssetId((prev) => ({ ...prev, ...entries }));
+      if (!cancelled) {
+        if (Object.keys(entries).length > 0) {
+          setThumbByAssetId((prev) => ({ ...prev, ...entries }));
+        }
+        if (Object.keys(lifecycles).length > 0) {
+          setLifecycleByAssetId((prev) => ({ ...prev, ...lifecycles }));
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [open, peers]);
+  }, [lifecycleByAssetId, open, peers]);
 
   const mergedPeers: DuplicatePeerItem[] = useMemo(() => {
     return peers.map((p) => ({
@@ -118,6 +129,19 @@ export default function PhotoDuplicatesDrawer({
       preview_url: p.preview_url ?? thumbByAssetId[p.asset_id] ?? null,
     }));
   }, [peers, thumbByAssetId]);
+
+  const handleRestore = async (assetId: string) => {
+    if (restoringAssetId) return;
+    setRestoringAssetId(assetId);
+    try {
+      await restoreAsset(assetId);
+      setLifecycleByAssetId((prev) => ({ ...prev, [assetId]: 'active' }));
+    } catch {
+      setError('Не удалось восстановить фото из корзины');
+    } finally {
+      setRestoringAssetId(null);
+    }
+  };
 
   return (
     <Drawer
@@ -166,13 +190,18 @@ export default function PhotoDuplicatesDrawer({
                   ) : item.relation === 'canonical_source' ? (
                     <div className={styles.badge}>Исходное фото</div>
                   ) : null}
+                  {lifecycleByAssetId[item.asset_id] === 'trashed' ? (
+                    <div className={styles.trashNotice}>
+                      Фото находится в корзине. Его можно сравнить или восстановить.
+                    </div>
+                  ) : null}
                   <div className={styles.relation}>
                     {item.relation === 'canonical_source' &&
-                      'Ссылка после подтверждения дубликата'}
+                      'Исходное фото, с которым был подтверждён дубликат'}
                     {item.relation === 'candidate_of_current' &&
                       'Кандидат в дубликаты'}
                     {item.relation === 'source_for_current' &&
-                      'Источник для текущего фото'}
+                      'Исходное фото этой группы дубликатов'}
                     {item.relation === 'sibling_candidate' &&
                       'Другой кандидат к тому же источнику'}
                   </div>
@@ -186,6 +215,19 @@ export default function PhotoDuplicatesDrawer({
                       >
                         Сравнить
                       </Button>
+                      {lifecycleByAssetId[item.asset_id] === 'trashed' ? (
+                        <Button
+                          color="primary"
+                          variant="filled"
+                          size="sm"
+                          disabled={restoringAssetId !== null}
+                          onClick={() => {
+                            void handleRestore(item.asset_id);
+                          }}
+                        >
+                          {restoringAssetId === item.asset_id ? '…' : 'Восстановить'}
+                        </Button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

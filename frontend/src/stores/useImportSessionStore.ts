@@ -509,6 +509,8 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
           title: res.filename,
           created_at: now,
           updated_at: now,
+          lifecycle_status: 'active',
+          trashed_at: null,
           version: {
             id: res.version_id,
             version_number: res.version_number,

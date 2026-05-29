@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Settings, Sun, Moon, Upload, Users } from 'lucide-react';
+import { Home, Settings, Sun, Moon, Trash2, Upload, Users } from 'lucide-react';
 import { useThemeStore } from '../../../stores/useThemeStore';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import UserMenu from '../UserMenu';
@@ -24,6 +24,21 @@ function ThemeToggle() {
     >
       {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
     </button>
+  );
+}
+
+function TrashLink() {
+  return (
+    <NavLink
+      to="/trash"
+      className={({ isActive }) =>
+        `${styles['icon-link']} ${isActive ? styles.active : ''}`
+      }
+      aria-label="Корзина"
+      title="Корзина"
+    >
+      <Trash2 size={18} />
+    </NavLink>
   );
 }
 
@@ -53,6 +68,7 @@ export default function Header() {
         </nav>
 
         <div className={styles['top-actions']}>
+          <TrashLink />
           <UserMenu />
           <ThemeToggle />
         </div>
@@ -61,6 +77,7 @@ export default function Header() {
       <div className={styles['mobile-bar']}>
         <span className={styles.logo}>Photo Manager</span>
         <div className={styles['top-actions']}>
+          <TrashLink />
           <UserMenu compact />
           <ThemeToggle />
         </div>

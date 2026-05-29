@@ -874,7 +874,6 @@ def list_import_batch_duplicate_groups(
         .join(Asset, AssetDuplicateCandidate.source_asset_id == Asset.id)
         .filter(
             Asset.import_batch_id == batch_id,
-            Asset.lifecycle_status == ASSET_LIFECYCLE_ACTIVE,
         )
         .order_by(
             AssetDuplicateCandidate.source_asset_id,

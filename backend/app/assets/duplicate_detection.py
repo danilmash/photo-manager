@@ -30,9 +30,15 @@ from app.assets.models import (
 )
 
 
-# Пороги Хэмминга для 64-битных phash/dhash (burst / слегка разные JPEG часто >12–14).
-PHASH_MAX_DISTANCE = 30
-DHASH_MAX_DISTANCE = 30
+# 64-битные phash/dhash: расстояние Хэмминга 0 = идентично, ≤10 ≈ дубликат/вариант,
+# >15 — обычно разные кадры. Раньше 30 давало массу ложных срабатываний.
+PHASH_MAX_DISTANCE = 24
+DHASH_MAX_DISTANCE = 26
+# Сумма расстояний по обоим хешам — доп. фильтр «похожести в целом».
+MAX_COMBINED_HAMMING = 30
+# Если доступен только один хеш — только при очень близком совпадении.
+PHASH_SINGLE_HASH_MAX = 6
+DHASH_SINGLE_HASH_MAX = 8
 
 
 def compute_original_hashes(
@@ -144,25 +150,45 @@ def _compare_versions(source: AssetVersion, other: AssetVersion) -> _Match | Non
     if source.sha256 and other.sha256 and source.sha256 == other.sha256:
         return _Match(other.asset_id, DUPLICATE_TYPE_EXACT, 0, 1.0)
 
-    candidates: list[_Match] = []
-
     phash_distance = _hex_hamming_distance(source.phash, other.phash)
-    if phash_distance is not None and phash_distance <= PHASH_MAX_DISTANCE:
-        score = max(0.0, 1.0 - phash_distance / 64.0)
-        candidates.append(
-            _Match(other.asset_id, DUPLICATE_TYPE_VISUAL, phash_distance, score),
-        )
-
     dhash_distance = _hex_hamming_distance(source.dhash, other.dhash)
-    if dhash_distance is not None and dhash_distance <= DHASH_MAX_DISTANCE:
-        score = max(0.0, 1.0 - dhash_distance / 64.0)
-        candidates.append(
-            _Match(other.asset_id, DUPLICATE_TYPE_NEAR, dhash_distance, score),
+
+    if phash_distance is not None and dhash_distance is not None:
+        combined = phash_distance + dhash_distance
+        if (
+            phash_distance <= PHASH_MAX_DISTANCE
+            and dhash_distance <= DHASH_MAX_DISTANCE
+            and combined <= MAX_COMBINED_HAMMING
+        ):
+            distance = max(phash_distance, dhash_distance)
+            score = max(0.0, 1.0 - combined / 128.0)
+            duplicate_type = (
+                DUPLICATE_TYPE_NEAR
+                if distance <= 5
+                else DUPLICATE_TYPE_VISUAL
+            )
+            return _Match(other.asset_id, duplicate_type, distance, score)
+        return None
+
+    if phash_distance is not None and phash_distance <= PHASH_SINGLE_HASH_MAX:
+        score = max(0.0, 1.0 - phash_distance / 64.0)
+        return _Match(
+            other.asset_id,
+            DUPLICATE_TYPE_VISUAL,
+            phash_distance,
+            score,
         )
 
-    if not candidates:
-        return None
-    return max(candidates, key=lambda m: (m.score, -m.distance))
+    if dhash_distance is not None and dhash_distance <= DHASH_SINGLE_HASH_MAX:
+        score = max(0.0, 1.0 - dhash_distance / 64.0)
+        return _Match(
+            other.asset_id,
+            DUPLICATE_TYPE_NEAR,
+            dhash_distance,
+            score,
+        )
+
+    return None
 
 
 def _acquire_batch_duplicate_scan_lock(db: Session, batch_id: uuid.UUID) -> None:

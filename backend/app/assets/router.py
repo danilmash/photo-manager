@@ -24,6 +24,13 @@ from app.assets.models import (
     File as AssetFileModel,
     apply_version_status,
 )
+from app.assets.image_formats import resolve_upload_mime
+from app.assets.lifecycle import (
+    collect_asset_relative_paths,
+    hard_delete_asset,
+    prepare_asset_hard_delete,
+    unlink_asset_rel_paths,
+)
 from app.assets.recipes import normalize_recipe
 from app.assets.schemas import (
     AssetLifecycleResponseSchema,
@@ -71,14 +78,6 @@ from app.users.models import User
 
 router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
-ALLOWED_MIME_TYPES = {
-    "image/jpeg",
-    "image/png",
-    "image/tiff",
-    "image/webp",
-    "image/heic",
-    "image/heif",
-}
 MAX_VERSION_TAGS = 30
 MAX_TAG_LENGTH = 64
 SPACE_RE = re.compile(r"\s+")
@@ -136,51 +135,6 @@ def _require_readable_lifecycle(asset: Asset) -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail="Операция недоступна для текущего состояния ассета",
         )
-
-
-def _collect_asset_relative_paths(db: Session, asset_id: uuid_mod.UUID) -> list[str]:
-    paths: list[str] = []
-    for (p,) in db.query(AssetFileModel.path).filter_by(asset_id=asset_id).all():
-        if p:
-            paths.append(p)
-    for (cp,) in (
-        db.query(FaceDetection.crop_path).filter(FaceDetection.asset_id == asset_id).all()
-    ):
-        if cp:
-            paths.append(cp)
-    return paths
-
-
-def _unlink_asset_rel_paths(rel_paths: list[str]) -> None:
-    root = Path(settings.storage_root).resolve()
-    seen: set[Path] = set()
-    for rel in rel_paths:
-        if not rel or Path(rel).is_absolute():
-            continue
-        try:
-            full = (root / rel).resolve()
-            full.relative_to(root)
-        except (OSError, ValueError):
-            continue
-        if full in seen:
-            continue
-        seen.add(full)
-        try:
-            if full.is_file():
-                full.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def _prepare_asset_hard_delete(db: Session, asset_id: uuid_mod.UUID) -> None:
-    db.query(AssetDuplicateCandidate).filter(
-        (AssetDuplicateCandidate.source_asset_id == asset_id)
-        | (AssetDuplicateCandidate.candidate_asset_id == asset_id),
-    ).delete(synchronize_session=False)
-    db.query(Asset).filter(Asset.duplicate_of_asset_id == asset_id).update(
-        {Asset.duplicate_of_asset_id: None},
-        synchronize_session=False,
-    )
 
 
 def _get_original_file(db: Session, asset_id: uuid_mod.UUID) -> AssetFileModel | None:
@@ -500,10 +454,15 @@ def upload_asset(
     current_user: User = Depends(get_current_user),
 ):
     content_type = file.content_type or ""
-    if content_type not in ALLOWED_MIME_TYPES:
+    resolved_mime = resolve_upload_mime(content_type, file.filename)
+    if resolved_mime is None:
+        ext_hint = Path(file.filename or "").suffix.lower() or "без расширения"
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Неподдерживаемый формат: {content_type}",
+            detail=(
+                "Неподдерживаемый формат: "
+                f"{content_type or 'неизвестный MIME'} ({ext_hint})"
+            ),
         )
 
     batch: ImportBatch | None = None
@@ -548,7 +507,7 @@ def upload_asset(
         id=file_id,
         asset_id=asset_id,
         filename=filename,
-        mime_type=content_type,
+        mime_type=resolved_mime,
         size_bytes=size_bytes,
         path=relative_path,
         purpose="original",
@@ -1349,11 +1308,11 @@ def empty_trash(
     )
     paths: list[str] = []
     for asset in assets:
-        paths.extend(_collect_asset_relative_paths(db, asset.id))
-        _prepare_asset_hard_delete(db, asset.id)
+        paths.extend(collect_asset_relative_paths(db, asset.id))
+        prepare_asset_hard_delete(db, asset.id)
         db.delete(asset)
     db.commit()
-    _unlink_asset_rel_paths(paths)
+    unlink_asset_rel_paths(paths)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1365,9 +1324,9 @@ def permanently_delete_asset(
 ):
     asset = _require_asset(db, asset_id)
     _require_trashed_lifecycle(asset)
-    paths = _collect_asset_relative_paths(db, asset.id)
-    _prepare_asset_hard_delete(db, asset.id)
+    paths = collect_asset_relative_paths(db, asset.id)
+    prepare_asset_hard_delete(db, asset.id)
     db.delete(asset)
     db.commit()
-    _unlink_asset_rel_paths(paths)
+    unlink_asset_rel_paths(paths)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

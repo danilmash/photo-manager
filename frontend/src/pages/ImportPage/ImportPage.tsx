@@ -92,6 +92,7 @@ export default function ImportPage() {
   const isListLoading = useImportSessionStore((s) => s.isListLoading);
   const listError = useImportSessionStore((s) => s.listError);
   const assetsByBatch = useImportSessionStore((s) => s.assetsByBatch);
+  const uploadsByBatch = useImportSessionStore((s) => s.uploadsByBatch);
   const assetsLoadingByBatch = useImportSessionStore(
     (s) => s.assetsLoadingByBatch,
   );
@@ -308,17 +309,28 @@ export default function ImportPage() {
     [batchId, startUploads],
   );
 
-  // Закрывать партию можно только когда для каждого ассета завершилась фаза
-  // preview: либо completed (пойдёт на ML), либо failed (останется в error,
-  // его можно будет потом перезапустить через retry-failed-previews).
+  // Закрывать партию можно, когда preview завершён для всех оставшихся ассетов
+  // или все загруженные файлы отброшены (неудачный preview).
   const canClose = useMemo(() => {
     if (!activeBatch || activeBatch.status !== 'uploading') return false;
-    if (activeAssets.length === 0) return false;
-    return activeAssets.every((a) => {
-      const p = a.version?.preview_status ?? 'pending';
-      return p === 'completed' || p === 'failed';
-    });
-  }, [activeBatch, activeAssets]);
+    const uploads = batchId ? uploadsByBatch[batchId] ?? [] : [];
+    if (uploads.some((u) => u.phase === 'uploading')) return false;
+    if (
+      activeAssets.some((a) => {
+        const p = a.version?.preview_status ?? 'pending';
+        return p === 'pending' || p === 'processing';
+      })
+    ) {
+      return false;
+    }
+    if (activeAssets.length > 0) {
+      return activeAssets.every((a) => a.version?.preview_status === 'completed');
+    }
+    return (
+      uploads.length > 0 &&
+      uploads.every((u) => u.phase === 'error' || u.phase === 'uploaded')
+    );
+  }, [activeBatch, activeAssets, batchId, uploadsByBatch]);
 
   const hasQueuedPreview = activeAssets.some((a) => {
     const p = a.version?.preview_status ?? 'pending';
@@ -637,7 +649,9 @@ export default function ImportPage() {
                           disabled={!canClose || isClosing}
                           title={
                             canClose
-                              ? 'Отправить партию на обработку'
+                              ? activeAssets.length === 0
+                                ? 'Закрыть пустую партию'
+                                : 'Отправить партию на обработку'
                               : hasQueuedPreview
                                 ? 'Дождитесь завершения загрузки'
                                 : 'Добавьте хотя бы один файл'

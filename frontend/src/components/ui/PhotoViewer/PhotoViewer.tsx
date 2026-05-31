@@ -35,6 +35,7 @@ import {
   type AssetViewer,
 } from '../../../api/assets';
 import { DEFAULT_PHOTO_RECIPE, normalizeRecipe, type PhotoRecipe } from '../../../api/recipe';
+import { isRawImage } from '../../../constants/imageFormats';
 import Button from '../Button';
 import Chip from '../Chip';
 import Drawer, { DRAWER_MOVE_PADDING_PX } from '../Drawer';
@@ -266,6 +267,15 @@ export default function PhotoViewer({
     currentPhoto?.version?.thumbnail_url,
   ]);
 
+  const editPreviewSourceUrl = useMemo(() => {
+    if (!currentViewer?.photo) return null;
+    const { photo } = currentViewer;
+    if (isRawImage(photo.filename, photo.mime_type)) {
+      return photoSrc || null;
+    }
+    return photo.original_url;
+  }, [currentViewer?.photo, photoSrc]);
+
   const displayPhotoSrc = renderedPreviewUrl ?? photoSrc;
 
   const viewportResetKey = currentPhoto?.asset_id ?? null;
@@ -407,7 +417,7 @@ export default function PhotoViewer({
   }, [editDrawerOpen, currentViewer?.version?.id]);
 
   useEffect(() => {
-    if (!editDrawerOpen || !currentViewer?.photo.original_url || !currentViewer.version) {
+    if (!editDrawerOpen || !editPreviewSourceUrl || !currentViewer?.version) {
       previewRenderRequestIdRef.current += 1;
       setRenderingPreview(false);
       setPreviewRenderError(null);
@@ -425,7 +435,7 @@ export default function PhotoViewer({
     setPreviewRenderError(null);
 
     const timer = window.setTimeout(() => {
-      void renderMagickPreviewUrl(currentViewer.photo.original_url!, draftRecipe)
+      void renderMagickPreviewUrl(editPreviewSourceUrl, draftRecipe)
         .then((nextUrl) => {
           if (previewRenderRequestIdRef.current !== requestId) {
             URL.revokeObjectURL(nextUrl);
@@ -456,7 +466,7 @@ export default function PhotoViewer({
   }, [
     draftRecipe,
     editDrawerOpen,
-    currentViewer?.photo.original_url,
+    editPreviewSourceUrl,
     currentViewer?.version?.id,
   ]);
 

@@ -642,12 +642,50 @@ export const useImportSessionStore = create<ImportSessionState>((set, get) => ({
 
       set((state) => {
         const prevAssets = state.assetsByBatch[batchId] ?? [];
+        const uploads = state.uploadsByBatch[batchId] ?? [];
+        const serverAssetIds = new Set(assetsRes.items.map((a) => a.asset_id));
+        const removedAssetIds = uploads
+          .filter(
+            (u) =>
+              u.phase === 'uploaded' &&
+              u.assetId &&
+              !serverAssetIds.has(u.assetId),
+          )
+          .map((u) => u.assetId as string);
+        const updatedUploads =
+          removedAssetIds.length === 0
+            ? uploads
+            : uploads.map((u) => {
+                if (
+                  u.phase === 'uploaded' &&
+                  u.assetId &&
+                  !serverAssetIds.has(u.assetId)
+                ) {
+                  return {
+                    ...u,
+                    phase: 'error' as const,
+                    message: 'Не удалось обработать файл',
+                  };
+                }
+                return u;
+              });
+        const removedIds = new Set(removedAssetIds);
+        const mergedAssets = mergeAssets(prevAssets, assetsRes.items).filter(
+          (a) => !removedIds.has(a.asset_id),
+        );
         return {
           batches: upsertBatch(state.batches, batch),
           assetsByBatch: {
             ...state.assetsByBatch,
-            [batchId]: mergeAssets(prevAssets, assetsRes.items),
+            [batchId]: mergedAssets,
           },
+          uploadsByBatch:
+            updatedUploads === uploads
+              ? state.uploadsByBatch
+              : {
+                  ...state.uploadsByBatch,
+                  [batchId]: updatedUploads,
+                },
           duplicatePendingByBatch: {
             ...state.duplicatePendingByBatch,
             [batchId]: dupPending,

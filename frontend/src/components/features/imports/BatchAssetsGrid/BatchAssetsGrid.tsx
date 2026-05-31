@@ -35,18 +35,6 @@ function deriveTileState(
   const preview = asset.version?.preview_status ?? 'pending';
   const faces = asset.version?.faces_status ?? 'pending';
 
-  if (preview === 'failed') {
-    return {
-      variant: 'error',
-      photoBadge: null,
-      showFacesError: false,
-      facesErrorMessage: null,
-      canRetryFaces: false,
-      clickable: false,
-      outsideCluster: false,
-    };
-  }
-
   if (isPreviewInFlight(preview)) {
     return {
       variant: 'skeleton',

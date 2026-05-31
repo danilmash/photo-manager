@@ -25,10 +25,11 @@ from app.assets.models import (
     apply_version_status,
 )
 from app.faces.models import FaceDetection
-from app.assets.tasks import process_asset_ml, process_asset_preview
+from app.assets.tasks import process_asset_ml
 from app.database import get_db
 from app.import_batches.models import (
     IMPORT_BATCH_STATUS_ACCEPTED,
+    IMPORT_BATCH_STATUS_CANCELLED,
     IMPORT_BATCH_STATUS_PENDING_REVIEW,
     IMPORT_BATCH_STATUS_PROCESSING,
     IMPORT_BATCH_STATUS_UPLOADING,
@@ -587,10 +588,10 @@ def close_import_batch(
         or 0
     )
     if assets_count == 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Нельзя закрыть пустую партию",
-        )
+        batch.status = IMPORT_BATCH_STATUS_CANCELLED
+        db.commit()
+        db.refresh(batch)
+        return _to_schema(batch, assets_count)
 
     latest_sq = _latest_versions_sq(db, batch.id)
     latest_versions_base = db.query(AssetVersion).join(
@@ -615,8 +616,7 @@ def close_import_batch(
         )
 
     # На ML отправляем только последние версии ассетов с успешным preview.
-    # Версии с preview_status=failed остаются в error — их можно перезапустить
-    # через retry-failed-previews уже после закрытия партии.
+    # Неудачные preview удаляются из системы на этапе process_asset_preview.
     ready_version_ids = [
         v.id
         for v in latest_versions_base.filter(
@@ -716,70 +716,6 @@ def set_import_batch_project(
         or 0
     )
     return _to_schema(batch, assets_count)
-
-
-@router.post(
-    "/{batch_id}/retry-failed-previews",
-    response_model=ImportBatchRetrySummarySchema,
-)
-def retry_failed_previews(
-    batch_id: uuid_mod.UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Перезапускает preview-задачи для всех ассетов партии с preview_status=failed.
-
-    Разрешено в любом статусе партии: упавший preview можно восстановить
-    как во время активной загрузки, так и уже после закрытия партии.
-    """
-    batch = db.query(ImportBatch).filter_by(id=batch_id).first()
-    if not batch:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Партия импорта не найдена",
-        )
-
-    latest_sq = _latest_versions_sq(db, batch.id)
-    failed_versions = (
-        db.query(AssetVersion)
-        .join(
-            latest_sq,
-            and_(
-                AssetVersion.asset_id == latest_sq.c.asset_id,
-                AssetVersion.version_number == latest_sq.c.max_version_number,
-            ),
-        )
-        .filter(AssetVersion.preview_status == TASK_STATUS_FAILED)
-        .all()
-    )
-
-    version_ids_to_enqueue: list[str] = []
-    for version in failed_versions:
-        original_file = (
-            db.query(AssetFileModel)
-            .filter_by(asset_id=version.asset_id, purpose="original")
-            .order_by(AssetFileModel.created_at.desc())
-            .first()
-        )
-        if not original_file:
-            # Без оригинала preview пересобрать невозможно — пропускаем,
-            # версия останется в error.
-            continue
-
-        version.preview_status = TASK_STATUS_PENDING
-        version.preview_error = None
-        apply_version_status(version)
-        version_ids_to_enqueue.append(str(version.id))
-
-    if version_ids_to_enqueue:
-        db.commit()
-        for vid in version_ids_to_enqueue:
-            process_asset_preview.delay(vid)
-
-    return ImportBatchRetrySummarySchema(
-        batch_id=batch.id,
-        restarted=len(version_ids_to_enqueue),
-    )
 
 
 @router.post(

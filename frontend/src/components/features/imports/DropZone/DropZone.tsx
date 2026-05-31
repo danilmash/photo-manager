@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 
+import { UPLOAD_ACCEPT } from '../../../../constants/imageFormats';
+
 import styles from './DropZone.module.css';
 
 export interface DropZoneProps {
@@ -12,8 +14,8 @@ export interface DropZoneProps {
 export default function DropZone({
   onFiles,
   disabled = false,
-  accept = 'image/*',
-  hint = 'Нажмите или перетащите файлы',
+  accept = UPLOAD_ACCEPT,
+  hint = 'Нажмите или перетащите JPEG, PNG, TIFF, HEIC или RAW',
 }: DropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);

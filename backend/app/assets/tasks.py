@@ -12,6 +12,7 @@ from app.assets.duplicate_detection import (
     compute_original_hashes,
     run_duplicate_scan_for_batch,
 )
+from app.assets.lifecycle import hard_delete_asset
 from app.assets.models import (
     ASSET_LIFECYCLE_ACTIVE,
     TASK_STATUS_COMPLETED,
@@ -311,6 +312,30 @@ def scan_import_batch_duplicates(batch_id: str) -> None:
         db.close()
 
 
+def _maybe_scan_batch_duplicates(db, import_batch_id) -> None:
+    if import_batch_id and batch_previews_all_terminal(db, import_batch_id):
+        scan_import_batch_duplicates.delay(str(import_batch_id))
+
+
+def _remove_asset_on_preview_failure(db, asset: Asset) -> None:
+    import_batch_id = hard_delete_asset(db, asset)
+    _maybe_scan_batch_duplicates(db, import_batch_id)
+
+
+def _fail_version_preview(db, version: AssetVersion, reason: str) -> None:
+    version.preview_status = TASK_STATUS_FAILED
+    version.preview_error = reason[:ERROR_TEXT_LIMIT]
+    apply_version_status(version)
+    db.commit()
+
+
+def _handle_preview_failure(db, asset: Asset, version: AssetVersion, reason: str) -> None:
+    if version.version_number > 1:
+        _fail_version_preview(db, version, reason)
+        return
+    _remove_asset_on_preview_failure(db, asset)
+
+
 @celery.task(name="app.assets.tasks.process_asset_preview")
 def process_asset_preview(version_id: str):
     db = SessionLocal()
@@ -333,10 +358,12 @@ def process_asset_preview(version_id: str):
 
         original_file = _get_original_file(db, asset.id)
         if not original_file:
-            version.preview_status = TASK_STATUS_FAILED
-            version.preview_error = "Оригинальный файл не найден"
-            apply_version_status(version)
-            db.commit()
+            _handle_preview_failure(
+                db,
+                asset,
+                version,
+                "Оригинальный файл не найден",
+            )
             return
 
         version.preview_status = TASK_STATUS_PROCESSING
@@ -410,10 +437,7 @@ def process_asset_preview(version_id: str):
             apply_version_status(version)
             db.commit()
 
-            if asset.import_batch_id and batch_previews_all_terminal(
-                db, asset.import_batch_id
-            ):
-                scan_import_batch_duplicates.delay(str(asset.import_batch_id))
+            _maybe_scan_batch_duplicates(db, asset.import_batch_id)
 
             batch = (
                 db.query(ImportBatch).filter_by(id=asset.import_batch_id).first()
@@ -425,12 +449,12 @@ def process_asset_preview(version_id: str):
         except Exception as exc:
             db.rollback()
             version = db.query(AssetVersion).filter_by(id=version_uuid).first()
-            if version:
-                version.preview_status = TASK_STATUS_FAILED
-                version.preview_error = _truncate_error(exc)
-                apply_version_status(version)
-                db.commit()
-            raise
+            if not version:
+                return
+            asset = db.query(Asset).filter_by(id=version.asset_id).first()
+            if not asset or asset.lifecycle_status != ASSET_LIFECYCLE_ACTIVE:
+                return
+            _handle_preview_failure(db, asset, version, _truncate_error(exc))
     finally:
         db.close()
 

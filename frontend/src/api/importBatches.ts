@@ -74,15 +74,6 @@ export interface ImportBatchRetrySummary {
   restarted: number;
 }
 
-export async function retryBatchFailedPreviews(
-  batchId: string,
-): Promise<ImportBatchRetrySummary> {
-  const { data } = await api.post<ImportBatchRetrySummary>(
-    `/import-batches/${batchId}/retry-failed-previews`,
-  );
-  return data;
-}
-
 export async function retryBatchFailedFaces(
   batchId: string,
 ): Promise<ImportBatchRetrySummary> {

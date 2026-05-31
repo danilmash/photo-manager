@@ -9,25 +9,33 @@ from sqlalchemy.orm import Query, Session
 from app.assets.models import Asset, AssetVersion
 
 
-def _exif_taken_date_expr(exif_column):
-    raw = func.coalesce(
+def _exif_taken_date_expr(exif_column, other_column):
+    exif_raw = func.coalesce(
         exif_column.op("->>")("DateTimeOriginal"),
         exif_column.op("->")("EXIF").op("->>")("DateTimeOriginal"),
         exif_column.op("->")("IFD0").op("->>")("DateTimeOriginal"),
     )
-    normalized = func.replace(func.substring(raw, 1, 10), ":", "-")
+    dng_raw = other_column.op("->>")("dng:create.date")
+    raw = func.coalesce(exif_raw, dng_raw)
+    normalized = func.replace(
+        func.replace(func.substring(raw, 1, 10), ":", "-"),
+        "T",
+        "-",
+    )
     return cast(normalized, String)
 
 
-def _exif_camera_text_expr(exif_column):
+def _exif_camera_text_expr(exif_column, other_column):
     make = func.coalesce(
         exif_column.op("->>")("Make"),
         exif_column.op("->")("IFD0").op("->>")("Make"),
+        other_column.op("->>")("dng:make"),
         "",
     )
     model = func.coalesce(
         exif_column.op("->>")("Model"),
         exif_column.op("->")("IFD0").op("->>")("Model"),
+        other_column.op("->>")("dng:camera.model.name"),
         "",
     )
     return func.lower(func.concat(make, " ", model))
@@ -75,7 +83,7 @@ def apply_metadata_filters(
         )
 
     if has_date:
-        taken_date_expr = _exif_taken_date_expr(AssetVersion.exif)
+        taken_date_expr = _exif_taken_date_expr(AssetVersion.exif, AssetVersion.other)
         if taken_from is not None:
             query = query.filter(taken_date_expr >= taken_from.isoformat())
         if taken_to is not None:
@@ -83,7 +91,7 @@ def apply_metadata_filters(
 
     if has_camera:
         needle = camera.strip().lower()
-        camera_expr = _exif_camera_text_expr(AssetVersion.exif)
+        camera_expr = _exif_camera_text_expr(AssetVersion.exif, AssetVersion.other)
         query = query.filter(camera_expr.contains(needle))
 
     return query

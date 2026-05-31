@@ -52,6 +52,7 @@ from app.assets.schemas import (
     AssetViewerResponseSchema,
     UploadResponseSchema,
 )
+from app.assets.metadata_display import extract_photo_display_fields
 from app.assets.metadata_filters import apply_metadata_filters, collect_distinct_tags
 from app.assets.person_filters import apply_person_filter
 from app.assets.ml_service import embed_text
@@ -333,24 +334,6 @@ def _build_scoped_assets_query(
     return q
 
 
-def _deep_get(data: dict[str, Any] | None, *paths: str) -> Any | None:
-    if not isinstance(data, dict):
-        return None
-
-    for path in paths:
-        current: Any = data
-        found = True
-        for key in path.split("."):
-            if isinstance(current, dict) and key in current:
-                current = current[key]
-            else:
-                found = False
-                break
-        if found and current not in (None, "", [], {}):
-            return current
-    return None
-
-
 def _build_version_summary(
     version: AssetVersion,
     version_files: dict[str, AssetFileModel] | None = None,
@@ -384,8 +367,13 @@ def _build_photo_info(
     version: AssetVersion | None,
     original_file: AssetFileModel | None,
 ) -> AssetPhotoInfoSchema:
-    exif = version.exif if version and isinstance(version.exif, dict) else {}
-    other = version.other if version and isinstance(version.other, dict) else {}
+    display = extract_photo_display_fields(
+        exif=version.exif if version else None,
+        other=version.other if version else None,
+        xmp=version.xmp if version else None,
+        rendered_width=version.rendered_width if version else None,
+        rendered_height=version.rendered_height if version else None,
+    )
 
     return AssetPhotoInfoSchema(
         original_file_id=original_file.id if original_file else None,
@@ -393,41 +381,16 @@ def _build_photo_info(
         filename=original_file.filename if original_file else None,
         mime_type=original_file.mime_type if original_file else None,
         size_bytes=original_file.size_bytes if original_file else None,
-        width=(
-            version.rendered_width
-            if version and version.rendered_width is not None
-            else _deep_get(
-                exif,
-                "ImageWidth",
-                "EXIF.ExifImageWidth",
-                "Composite.ImageWidth",
-            )
-            or _deep_get(other, "width")
-        ),
-        height=(
-            version.rendered_height
-            if version and version.rendered_height is not None
-            else _deep_get(
-                exif,
-                "ImageHeight",
-                "EXIF.ExifImageHeight",
-                "Composite.ImageHeight",
-            )
-            or _deep_get(other, "height")
-        ),
-        taken_at=_deep_get(
-            exif,
-            "DateTimeOriginal",
-            "EXIF.DateTimeOriginal",
-            "Composite.SubSecDateTimeOriginal",
-        ),
-        camera_make=_deep_get(exif, "Make", "IFD0.Make"),
-        camera_model=_deep_get(exif, "Model", "IFD0.Model"),
-        lens=_deep_get(exif, "LensModel", "EXIF.LensModel"),
-        iso=_deep_get(exif, "ISOSpeedRatings", "EXIF.ISOSpeedRatings"),
-        aperture=_deep_get(exif, "FNumber", "EXIF.FNumber"),
-        shutter_speed=_deep_get(exif, "ExposureTime", "EXIF.ExposureTime"),
-        focal_length=_deep_get(exif, "FocalLength", "EXIF.FocalLength"),
+        width=display["width"],
+        height=display["height"],
+        taken_at=display["taken_at"],
+        camera_make=display["camera_make"],
+        camera_model=display["camera_model"],
+        lens=display["lens"],
+        iso=display["iso"],
+        aperture=display["aperture"],
+        shutter_speed=display["shutter_speed"],
+        focal_length=display["focal_length"],
         rating=version.rating if version else None,
         keywords=_normalize_keywords(version.keywords if version else None),
     )

@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlalchemy import and_, func
 from wand.image import Image
 
+from app.assets.metadata_display import normalize_exif_fields
 from app.assets.ml_service import detect_faces, embed_image
 from app.assets.render import apply_recipe
 from app.assets.duplicate_detection import (
@@ -386,14 +387,22 @@ def process_asset_preview(version_id: str):
                 version.dhash = dhash_hex
 
                 meta = _extract_metadata(img) or {}
-                if version.exif is None and isinstance(meta.get("exif"), dict):
-                    version.exif = meta.get("exif")
+                extracted_exif = meta.get("exif") if isinstance(meta.get("exif"), dict) else {}
+                extracted_other = meta.get("other") if isinstance(meta.get("other"), dict) else {}
+                extracted_xmp = meta.get("xmp") if isinstance(meta.get("xmp"), dict) else {}
+                normalized_exif = normalize_exif_fields(
+                    extracted_exif,
+                    extracted_other,
+                    extracted_xmp,
+                )
+                if version.exif is None and normalized_exif:
+                    version.exif = normalized_exif
                 if version.iptc is None and isinstance(meta.get("iptc"), dict):
                     version.iptc = meta.get("iptc")
                 if version.xmp is None and isinstance(meta.get("xmp"), dict):
                     version.xmp = meta.get("xmp")
-                if version.other is None and isinstance(meta.get("other"), dict):
-                    version.other = meta.get("other")
+                if version.other is None and extracted_other:
+                    version.other = extracted_other
 
                 recipe = normalize_recipe(version.recipe)
                 version.recipe = recipe

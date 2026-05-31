@@ -1,0 +1,14 @@
+# Поверх docker-compose.yml: hot-reload фронта вместо production-сборки.
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      API_TARGET: http://api:8000

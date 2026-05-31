@@ -1,12 +1,18 @@
-FROM node:20-alpine
+# Этап 1: production-сборка SPA (Vite + TypeScript)
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
+RUN npm run build
 
-EXPOSE 5173
+# Этап 2: раздача статики и прокси /api → backend
+FROM nginx:1.27-alpine
 
-CMD ["npm", "run", "dev", "--", "--host"]
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80

@@ -13,6 +13,8 @@ export interface SidebarProps {
   children: React.ReactNode;
   title?: string;
   ariaLabel?: string;
+  /** Полноэкранный оверлей (просмотрщик и т.п.): скрыть toggle и не перехватывать Escape. */
+  overlayOpen?: boolean;
 }
 
 function useIsMobile(breakpoint: number): boolean {
@@ -40,19 +42,20 @@ export default function Sidebar({
   children,
   title,
   ariaLabel = 'Боковая панель',
+  overlayOpen = false,
 }: SidebarProps) {
   const isMobile = useIsMobile(MOBILE_BREAKPOINT);
 
-  useBodyScrollLock(open && isMobile);
+  useBodyScrollLock(open && isMobile && !overlayOpen);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || overlayOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onToggle();
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [open, onToggle]);
+  }, [open, onToggle, overlayOpen]);
 
   const panelClass = [styles.panel, open ? styles.open : styles.collapsed]
     .filter(Boolean)
@@ -86,15 +89,17 @@ export default function Sidebar({
         <div className={styles.body}>{children}</div>
       </aside>
 
-      <button
-        type="button"
-        className={toggleClass}
-        onClick={onToggle}
-        aria-label={open ? 'Свернуть панель' : 'Развернуть панель'}
-        aria-expanded={open}
-      >
-        {open ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-      </button>
+      {!overlayOpen ? (
+        <button
+          type="button"
+          className={toggleClass}
+          onClick={onToggle}
+          aria-label={open ? 'Свернуть панель' : 'Развернуть панель'}
+          aria-expanded={open}
+        >
+          {open ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+        </button>
+      ) : null}
     </>
   );
 }

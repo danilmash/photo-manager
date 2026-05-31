@@ -10,6 +10,7 @@ import styles from './FoldersSidebar.module.css';
 export interface FoldersSidebarProps {
   open: boolean;
   onToggle: () => void;
+  overlayOpen?: boolean;
   folders: FolderSummary[];
   isLoading: boolean;
   error: string | null;
@@ -21,6 +22,7 @@ export interface FoldersSidebarProps {
 export default function FoldersSidebar({
   open,
   onToggle,
+  overlayOpen = false,
   folders,
   isLoading,
   error,
@@ -31,7 +33,13 @@ export default function FoldersSidebar({
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   return (
-    <Sidebar open={open} onToggle={onToggle} title="Папки" ariaLabel="Папки библиотеки">
+    <Sidebar
+      open={open}
+      onToggle={onToggle}
+      overlayOpen={overlayOpen}
+      title="Папки"
+      ariaLabel="Папки библиотеки"
+    >
       <div className={styles.inner}>
         <button type="button" className={styles.createBtn} onClick={onCreate}>
           <FolderPlus size={18} aria-hidden="true" />

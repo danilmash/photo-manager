@@ -66,7 +66,7 @@ from app.folders.service import (
     build_folder_summary,
     list_asset_folders,
     require_folder,
-    require_owned_asset,
+    require_asset as require_folder_asset,
 )
 from app.import_batches.models import (
     IMPORT_BATCH_STATUS_PENDING_REVIEW,
@@ -1173,7 +1173,7 @@ def set_asset_folders(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = require_owned_asset(db, asset_id, current_user)
+    asset = require_folder_asset(db, asset_id)
     _require_active_lifecycle(asset)
 
     unique_folder_ids = list(dict.fromkeys(body.folder_ids))
@@ -1213,7 +1213,7 @@ def add_asset_to_folder(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = require_owned_asset(db, asset_id, current_user)
+    asset = require_folder_asset(db, asset_id)
     _require_active_lifecycle(asset)
     require_folder(db, folder_id, current_user)
 
@@ -1243,7 +1243,7 @@ def remove_asset_from_folder(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_owned_asset(db, asset_id, current_user)
+    require_folder_asset(db, asset_id)
     require_folder(db, folder_id, current_user)
 
     db.query(FolderAsset).filter(

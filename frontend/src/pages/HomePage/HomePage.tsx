@@ -75,6 +75,7 @@ export default function HomePage() {
 
   const folders = useFoldersStore((s) => s.items);
   const foldersLoading = useFoldersStore((s) => s.isLoading);
+  const foldersLoaded = useFoldersStore((s) => s.hasLoaded);
   const foldersError = useFoldersStore((s) => s.error);
   const fetchFolders = useFoldersStore((s) => s.fetchFolders);
   const createFolder = useFoldersStore((s) => s.createFolder);
@@ -103,19 +104,19 @@ export default function HomePage() {
   }, [fetchFolders]);
 
   useEffect(() => {
-    setFolderId(routeFolderId ?? null);
-  }, [routeFolderId, setFolderId]);
-
-  useEffect(() => {
+    const targetFolderId = routeFolderId ?? null;
+    if (folderId !== targetFolderId) {
+      setFolderId(targetFolderId);
+      return;
+    }
     void loadInitial();
-  }, [folderId, loadInitial]);
+  }, [folderId, loadInitial, routeFolderId, setFolderId]);
 
   useEffect(() => {
-    if (!routeFolderId) return;
-    if (foldersLoading) return;
+    if (!routeFolderId || !foldersLoaded || foldersLoading || foldersError) return;
     if (folders.some((folder) => folder.id === routeFolderId)) return;
     navigate('/', { replace: true });
-  }, [folders, foldersLoading, navigate, routeFolderId]);
+  }, [folders, foldersError, foldersLoaded, foldersLoading, navigate, routeFolderId]);
 
   useEffect(() => {
     setSidebarOpen(!isMobile);
@@ -234,6 +235,8 @@ export default function HomePage() {
     onOpenAsset: openAsset,
   });
 
+  const viewerOpen = !selectionActive && selectedIndex >= 0;
+
   const handleTrashSelected = useCallback(async () => {
     const assetIds = Array.from(selectedAssetIds);
     if (assetIds.length === 0) return;
@@ -299,6 +302,7 @@ export default function HomePage() {
       <FoldersSidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((prev) => !prev)}
+        overlayOpen={viewerOpen}
         folders={folders}
         isLoading={foldersLoading}
         error={foldersError}
@@ -551,7 +555,7 @@ export default function HomePage() {
           <Modal
             dark
             variant="fullscreen"
-            isOpen={!selectionActive && selectedIndex >= 0}
+            isOpen={viewerOpen}
             onClose={() => setSelectedAssetId(null)}
           >
             <PhotoViewer

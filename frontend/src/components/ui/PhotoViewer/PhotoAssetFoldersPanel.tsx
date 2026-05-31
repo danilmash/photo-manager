@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check, Folder } from 'lucide-react';
 
 import {
   addAssetToFolder,
   getAssetFolders,
-  listFolders,
   removeAssetFromFolder,
   type FolderSummary,
 } from '../../../api/folders';
+import { useFoldersStore } from '../../../stores/useFoldersStore';
+
+import styles from './PhotoAssetFoldersPanel.module.css';
 
 export interface PhotoAssetFoldersPanelProps {
   assetId: string;
@@ -16,103 +19,135 @@ export interface PhotoAssetFoldersPanelProps {
 
 export default function PhotoAssetFoldersPanel({
   assetId,
-  open,
+  open: _open,
   onChanged,
 }: PhotoAssetFoldersPanelProps) {
-  const [allFolders, setAllFolders] = useState<FolderSummary[]>([]);
-  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
-  const [savingFolderId, setSavingFolderId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const allFolders = useFoldersStore((s) => s.items);
+  const foldersLoading = useFoldersStore((s) => s.isLoading);
+  const foldersLoaded = useFoldersStore((s) => s.hasLoaded);
+  const foldersError = useFoldersStore((s) => s.error);
+  const fetchFolders = useFoldersStore((s) => s.fetchFolders);
 
-  const load = useCallback(async () => {
+  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
+  const [membershipLoading, setMembershipLoading] = useState(false);
+  const [savingFolderId, setSavingFolderId] = useState<string | null>(null);
+  const [membershipError, setMembershipError] = useState<string | null>(null);
+
+  const loadMembership = useCallback(async () => {
     if (!assetId) return;
-    setLoading(true);
-    setError(null);
+    setMembershipLoading(true);
+    setMembershipError(null);
     try {
-      const [foldersResponse, assetFoldersResponse] = await Promise.all([
-        listFolders(),
-        getAssetFolders(assetId),
-      ]);
-      setAllFolders(foldersResponse.items);
-      setMemberIds(new Set(assetFoldersResponse.folders.map((folder) => folder.id)));
+      const response = await getAssetFolders(assetId);
+      setMemberIds(new Set(response.folders.map((folder) => folder.id)));
     } catch {
-      setError('Не удалось загрузить папки');
+      setMembershipError('Не удалось загрузить папки фото');
     } finally {
-      setLoading(false);
+      setMembershipLoading(false);
     }
   }, [assetId]);
 
   useEffect(() => {
-    if (!open || !assetId) return;
-    void load();
-  }, [assetId, load, open]);
+    if (!assetId) return;
+    void fetchFolders();
+    void loadMembership();
+  }, [assetId, fetchFolders, loadMembership]);
 
-  const handleToggle = async (folder: FolderSummary, checked: boolean) => {
+  const selectedFolders = useMemo(
+    () => allFolders.filter((folder) => memberIds.has(folder.id)),
+    [allFolders, memberIds],
+  );
+
+  const handleToggle = async (folder: FolderSummary) => {
     if (savingFolderId) return;
+    const checked = memberIds.has(folder.id);
     setSavingFolderId(folder.id);
-    setError(null);
+    setMembershipError(null);
     try {
-      if (checked) {
-        const response = await addAssetToFolder(assetId, folder.id);
-        setMemberIds(new Set(response.folders.map((item) => item.id)));
-      } else {
-        const response = await removeAssetFromFolder(assetId, folder.id);
-        setMemberIds(new Set(response.folders.map((item) => item.id)));
-      }
+      const response = checked
+        ? await removeAssetFromFolder(assetId, folder.id)
+        : await addAssetToFolder(assetId, folder.id);
+      setMemberIds(new Set(response.folders.map((item) => item.id)));
       onChanged?.();
     } catch {
-      setError('Не удалось обновить папки');
+      setMembershipError('Не удалось обновить папки');
     } finally {
       setSavingFolderId(null);
     }
   };
 
+  const loading = membershipLoading || (foldersLoading && !foldersLoaded);
+  const error = membershipError ?? foldersError;
+
   if (loading) {
-    return <div style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>Загрузка…</div>;
+    return (
+      <div className={styles.root}>
+        <div className={styles.skeletonGrid} aria-hidden="true">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className={styles.skeletonCard} />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   if (allFolders.length === 0) {
     return (
-      <p style={{ margin: 0, fontSize: 14, color: 'var(--color-text-secondary)' }}>
-        Папок пока нет. Создайте их на главной странице библиотеки.
+      <p className={styles.empty}>
+        Папок пока нет. Создайте их в боковой панели на главной странице библиотеки.
       </p>
     );
   }
 
   return (
-    <div style={{ display: 'grid', gap: 8 }}>
-      {allFolders.map((folder) => {
-        const checked = memberIds.has(folder.id);
-        const disabled = savingFolderId !== null;
-        return (
-          <label
-            key={folder.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              fontSize: 14,
-              color: 'var(--color-text-primary)',
-              cursor: disabled ? 'default' : 'pointer',
-              opacity: savingFolderId === folder.id ? 0.6 : 1,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={checked}
+    <div className={styles.root}>
+      <div className={styles.summary} aria-label="Папки, в которых находится фото">
+        {selectedFolders.length > 0 ? (
+          selectedFolders.map((folder) => (
+            <span key={folder.id} className={styles.summaryChip}>
+              <Folder size={14} aria-hidden="true" />
+              {folder.name}
+            </span>
+          ))
+        ) : (
+          <p className={styles.summaryEmpty}>Фото ещё не добавлено ни в одну папку</p>
+        )}
+      </div>
+
+      <div className={styles.grid} role="group" aria-label="Выбор папок">
+        {allFolders.map((folder) => {
+          const active = memberIds.has(folder.id);
+          const disabled = savingFolderId !== null;
+          return (
+            <button
+              key={folder.id}
+              type="button"
+              className={`${styles.folderCard} ${active ? styles.folderCardActive : ''}`}
               disabled={disabled}
-              onChange={(event) => {
-                void handleToggle(folder, event.target.checked);
+              aria-pressed={active}
+              onClick={() => {
+                void handleToggle(folder);
               }}
-            />
-            <span>{folder.name}</span>
-          </label>
-        );
-      })}
-      {error ? (
-        <div style={{ color: 'var(--color-danger, #c62828)', fontSize: 13 }}>{error}</div>
-      ) : null}
+            >
+              <span className={styles.folderCardHead}>
+                <span className={styles.folderIcon} aria-hidden="true">
+                  <Folder size={15} />
+                </span>
+                <span className={styles.folderName}>{folder.name}</span>
+                {active ? (
+                  <Check size={16} className={styles.checkMark} aria-hidden="true" />
+                ) : null}
+              </span>
+              <span className={styles.folderMeta}>
+                {folder.asset_count}{' '}
+                {folder.asset_count === 1 ? 'фото' : 'фото'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {error ? <p className={styles.error}>{error}</p> : null}
     </div>
   );
 }

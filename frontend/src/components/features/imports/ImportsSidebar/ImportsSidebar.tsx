@@ -30,6 +30,7 @@ function formatDate(iso: string): string {
 export interface ImportsSidebarProps {
   open: boolean;
   onToggle: () => void;
+  overlayOpen?: boolean;
   batches: ImportBatch[];
   isLoading: boolean;
   error: string | null;
@@ -40,6 +41,7 @@ export interface ImportsSidebarProps {
 export default function ImportsSidebar({
   open,
   onToggle,
+  overlayOpen = false,
   batches,
   isLoading,
   error,
@@ -50,6 +52,7 @@ export default function ImportsSidebar({
     <Sidebar
       open={open}
       onToggle={onToggle}
+      overlayOpen={overlayOpen}
       title="Импорты"
       ariaLabel="Список партий импорта"
     >

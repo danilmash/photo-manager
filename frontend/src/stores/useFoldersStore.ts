@@ -11,6 +11,7 @@ import {
 interface FoldersStore {
   items: FolderSummary[];
   isLoading: boolean;
+  hasLoaded: boolean;
   error: string | null;
   fetchFolders: () => Promise<void>;
   createFolder: (name: string) => Promise<FolderSummary>;
@@ -29,16 +30,18 @@ function getErrorMessage(err: unknown, fallback: string): string {
 export const useFoldersStore = create<FoldersStore>((set, get) => ({
   items: [],
   isLoading: false,
+  hasLoaded: false,
   error: null,
 
   fetchFolders: async () => {
     set({ isLoading: true, error: null });
     try {
       const data = await listFolders();
-      set({ items: data.items, isLoading: false });
+      set({ items: data.items, isLoading: false, hasLoaded: true });
     } catch (err) {
       set({
         isLoading: false,
+        hasLoaded: true,
         error: getErrorMessage(err, 'Не удалось загрузить папки'),
       });
     }

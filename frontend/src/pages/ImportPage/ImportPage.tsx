@@ -554,11 +554,14 @@ export default function ImportPage() {
     [applyTagsToBatch, batchId],
   );
 
+  const importViewerOpen = dupClusterViewer !== null || assetViewer !== null;
+
   return (
     <>
       <ImportsSidebar
         open={sidebarOpen}
         onToggle={() => setSidebarOpen((v) => !v)}
+        overlayOpen={importViewerOpen}
         batches={batches}
         isLoading={isListLoading}
         error={listError}

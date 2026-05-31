@@ -38,17 +38,12 @@ def require_folder(
     return folder
 
 
-def require_owned_asset(db: Session, asset_id: uuid_mod.UUID, current_user: User) -> Asset:
+def require_asset(db: Session, asset_id: uuid_mod.UUID) -> Asset:
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Ассет не найден",
-        )
-    if asset.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Нет доступа к ассету",
         )
     return asset
 
@@ -81,7 +76,7 @@ def list_asset_folders(
     asset_id: uuid_mod.UUID,
     current_user: User,
 ) -> list[FolderSummarySchema]:
-    require_owned_asset(db, asset_id, current_user)
+    require_asset(db, asset_id)
     folders = (
         db.query(Folder)
         .join(FolderAsset, FolderAsset.folder_id == Folder.id)

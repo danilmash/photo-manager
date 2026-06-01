@@ -30,8 +30,10 @@ import type {
 import {
   createAssetVersion,
   getAssetViewer,
+  listAssetVersions,
   updateAssetVersionTags,
   type AssetListItem,
+  type AssetVersionSummary,
   type AssetViewer,
 } from '../../../api/assets';
 import { DEFAULT_PHOTO_RECIPE, normalizeRecipe, type PhotoRecipe } from '../../../api/recipe';
@@ -47,6 +49,8 @@ import PhotoEditDrawer from './PhotoEditDrawer';
 import PhotoEditMobileOverlay from './PhotoEditMobileOverlay';
 import PhotoCompareStage from './PhotoCompareStage';
 import PhotoAssetFoldersPanel from './PhotoAssetFoldersPanel';
+import PhotoVersionDescription from './PhotoVersionDescription';
+import PhotoVersionHistory from './PhotoVersionHistory';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../../hooks/useMediaQuery';
 import ZoomableImageStage from './ZoomableImageStage';
 import { renderMagickPreviewUrl } from './magickPreview';
@@ -195,10 +199,13 @@ export default function PhotoViewer({
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareLabel, setCompareLabel] = useState('');
   const [assetActionLoading, setAssetActionLoading] = useState(false);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+  const [versionHistory, setVersionHistory] = useState<AssetVersionSummary[]>([]);
+  const [versionHistoryLoading, setVersionHistoryLoading] = useState(false);
+  const [versionHistoryError, setVersionHistoryError] = useState<string | null>(null);
 
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const isTrashMode = lifecycleMode === 'trashed';
-  const isEditing = !isTrashMode && editDrawerOpen;
 
   const prevIndexRef = useRef(currentIndex);
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -210,6 +217,7 @@ export default function PhotoViewer({
   const renderedPreviewUrlRef = useRef<string | null>(null);
   const compareImgRef = useRef<HTMLImageElement>(null);
   const viewportMetricsRef = useRef<ViewportMetrics | null>(null);
+  const versionsSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (currentIndex > prevIndexRef.current) {
@@ -242,7 +250,18 @@ export default function PhotoViewer({
 
   const currentPhoto = photos[currentIndex];
 
+  const latestVersionId =
+    versionHistory[0]?.id ?? currentPhoto?.version?.id ?? null;
+  const isViewingLatest =
+    latestVersionId == null ||
+    selectedVersionId == null ||
+    selectedVersionId === latestVersionId;
+  const canEditPhoto = !isTrashMode && isViewingLatest;
+  const isEditing = canEditPhoto && editDrawerOpen;
+  const versionCount = versionHistory.length || (currentPhoto?.version ? 1 : 0);
+
   const currentViewer = currentPhoto ? viewerById[currentPhoto.asset_id] ?? null : null;
+  const displayedVersionNumber = currentViewer?.version?.version_number ?? null;
   const viewerLoading = currentPhoto
     ? viewerLoadingById[currentPhoto.asset_id] ?? false
     : false;
@@ -293,9 +312,31 @@ export default function PhotoViewer({
     viewerByIdRef.current = viewerById;
   }, [viewerById]);
 
-  const loadAssetViewer = useCallback(async (assetId: string, force = false) => {
+  const loadVersionHistory = useCallback(async (assetId: string) => {
+    if (!assetId) return;
+
+    setVersionHistoryLoading(true);
+    setVersionHistoryError(null);
+    try {
+      const data = await listAssetVersions(assetId);
+      setVersionHistory(data.items);
+    } catch {
+      setVersionHistoryError('Не удалось загрузить историю версий');
+      setVersionHistory([]);
+    } finally {
+      setVersionHistoryLoading(false);
+    }
+  }, []);
+
+  const loadAssetViewer = useCallback(
+    async (
+      assetId: string,
+      opts?: { force?: boolean; versionId?: string | null },
+    ) => {
     if (!assetId) return null;
-    if (!force && viewerByIdRef.current[assetId]) {
+    const versionId = opts?.versionId ?? undefined;
+    const force = opts?.force ?? false;
+    if (!force && !versionId && viewerByIdRef.current[assetId]) {
       return viewerByIdRef.current[assetId];
     }
 
@@ -312,7 +353,9 @@ export default function PhotoViewer({
     }));
 
     try {
-      const data = await getAssetViewer(assetId);
+      const data = await getAssetViewer(assetId, {
+        versionId: versionId ?? undefined,
+      });
 
       if (viewerRequestIdRef.current[assetId] !== requestId) {
         return data;
@@ -345,11 +388,16 @@ export default function PhotoViewer({
         }));
       }
     }
-  }, []);
+  },
+  [],
+  );
 
   useEffect(() => {
     setEditDrawerOpen(false);
     setDuplicatesDrawerOpen(false);
+    setSelectedVersionId(null);
+    setVersionHistory([]);
+    setVersionHistoryError(null);
   }, [currentPhoto?.asset_id]);
 
   useEffect(() => {
@@ -402,12 +450,55 @@ export default function PhotoViewer({
   }, []);
 
   const handleOpenEdit = useCallback(() => {
+    if (!canEditPhoto) return;
     setInfoDrawerOpen(false);
     setDuplicatesDrawerOpen(false);
     setImportDupDrawerOpen(false);
     setCompareMode(false);
     setEditDrawerOpen(true);
+  }, [canEditPhoto]);
+
+  const handleOpenInfoToVersions = useCallback(() => {
+    setEditDrawerOpen(false);
+    setDuplicatesDrawerOpen(false);
+    setImportDupDrawerOpen(false);
+    setInfoDrawerOpen(true);
+    requestAnimationFrame(() => {
+      versionsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   }, []);
+
+  const handleSelectVersion = useCallback((versionId: string) => {
+    setSelectedVersionId(versionId);
+  }, []);
+
+  const handleDescriptionSaved = useCallback(
+    (description: string | null) => {
+      const aid = currentPhoto?.asset_id;
+      const vid = currentViewer?.version?.id;
+      if (!aid || !vid) return;
+
+      setViewerById((prev) => {
+        const viewer = prev[aid];
+        if (!viewer?.version) return prev;
+        const next = {
+          ...prev,
+          [aid]: {
+            ...viewer,
+            version: { ...viewer.version, description },
+            photo: { ...viewer.photo, description },
+          },
+        };
+        viewerByIdRef.current = next;
+        return next;
+      });
+
+      setVersionHistory((prev) =>
+        prev.map((item) => (item.id === vid ? { ...item, description } : item)),
+      );
+    },
+    [currentPhoto?.asset_id, currentViewer?.version?.id],
+  );
 
   useEffect(() => {
     if (!editDrawerOpen) return;
@@ -495,13 +586,21 @@ export default function PhotoViewer({
         base_version_id: vid,
       });
       setEditDrawerOpen(false);
-      await loadAssetViewer(aid, true);
+      setSelectedVersionId(null);
+      await loadAssetViewer(aid, { force: true });
+      await loadVersionHistory(aid);
     } catch {
       // ошибку можно показать тостом позже
     } finally {
       setApplyingVersion(false);
     }
-  }, [currentPhoto?.asset_id, currentViewer?.version?.id, draftRecipe, loadAssetViewer]);
+  }, [
+    currentPhoto?.asset_id,
+    currentViewer?.version?.id,
+    draftRecipe,
+    loadAssetViewer,
+    loadVersionHistory,
+  ]);
 
   const saveTags = useCallback(
     async (tags: string[]) => {
@@ -573,8 +672,26 @@ export default function PhotoViewer({
 
   useEffect(() => {
     if (!currentPhoto?.asset_id) return;
-    void loadAssetViewer(currentPhoto.asset_id).catch(() => {});
-  }, [currentPhoto?.asset_id, loadAssetViewer]);
+    void loadAssetViewer(currentPhoto.asset_id, {
+      versionId: selectedVersionId,
+      force: true,
+    }).catch(() => {});
+  }, [currentPhoto?.asset_id, selectedVersionId, loadAssetViewer]);
+
+  useEffect(() => {
+    if (!currentPhoto?.asset_id) return;
+    void loadVersionHistory(currentPhoto.asset_id);
+  }, [currentPhoto?.asset_id, loadVersionHistory]);
+
+  useEffect(() => {
+    if (!infoDrawerOpen || !currentPhoto?.asset_id) return;
+    void loadVersionHistory(currentPhoto.asset_id);
+  }, [infoDrawerOpen, currentPhoto?.asset_id, loadVersionHistory]);
+
+  useEffect(() => {
+    if (isViewingLatest && editDrawerOpen) return;
+    if (!isViewingLatest) setEditDrawerOpen(false);
+  }, [isViewingLatest, editDrawerOpen]);
 
   useEffect(() => {
     if (!currentViewer) {
@@ -876,6 +993,16 @@ export default function PhotoViewer({
         )}
 
         <div className={styles['options-buttons']}>
+          {!isEditing && versionCount > 1 && displayedVersionNumber != null ? (
+            <button
+              type="button"
+              className={styles.versionChip}
+              onClick={handleOpenInfoToVersions}
+              aria-label={`Версия ${displayedVersionNumber} из ${versionCount}. Открыть историю версий`}
+            >
+              v{displayedVersionNumber} из {versionCount}
+            </button>
+          ) : null}
           {!isEditing ? (
             <Button
               color="muted"
@@ -979,7 +1106,7 @@ export default function PhotoViewer({
                   aria-label="Дубликаты и похожие"
                 />
               ) : null}
-              {!isTrashMode ? (
+              {canEditPhoto ? (
                 <Button
                   color="muted"
                   variant="ghost"
@@ -1010,6 +1137,35 @@ export default function PhotoViewer({
               <div>{viewerError}</div>
             ) : currentViewer ? (
               <>
+                <section
+                  ref={versionsSectionRef}
+                  style={{ display: 'grid', gap: 10 }}
+                >
+                  <h3 style={{ margin: 0, fontSize: 16 }}>Версии</h3>
+                  <PhotoVersionHistory
+                    versions={versionHistory}
+                    latestVersionId={latestVersionId}
+                    selectedVersionId={selectedVersionId}
+                    onSelect={handleSelectVersion}
+                    loading={versionHistoryLoading}
+                    error={versionHistoryError}
+                  />
+                </section>
+
+                <section style={{ display: 'grid', gap: 10 }}>
+                  <PhotoVersionDescription
+                    assetId={currentViewer.id}
+                    versionId={currentViewer.version?.id ?? null}
+                    description={
+                      currentViewer.photo.description ??
+                      currentViewer.version?.description ??
+                      null
+                    }
+                    disabled={isTrashMode || !currentViewer.version}
+                    onSaved={handleDescriptionSaved}
+                  />
+                </section>
+
                 <section style={{ display: 'grid', gap: 10 }}>
                   <h3 style={{ margin: 0, fontSize: 16 }}>Основная информация</h3>
 
@@ -1167,7 +1323,10 @@ export default function PhotoViewer({
                         activeFaceId={activeFaceId}
                         onActiveFaceChange={setActiveFaceId}
                         onFacesReload={(assetId) =>
-                          loadAssetViewer(assetId, true).then(() => undefined)
+                          loadAssetViewer(assetId, {
+                            force: true,
+                            versionId: selectedVersionId,
+                          }).then(() => undefined)
                         }
                       />
                     </section>

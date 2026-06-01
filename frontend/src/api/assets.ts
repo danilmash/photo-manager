@@ -31,6 +31,7 @@ export interface AssetVersionSummary {
   faces_error: string | null;
   recipe: Record<string, unknown>;
   keywords: string[];
+  description: string | null;
   rendered_width: number | null;
   rendered_height: number | null;
   is_identity_source: boolean;
@@ -209,6 +210,7 @@ export interface AssetPhotoInfo {
   focal_length: unknown | null;
   rating: number | null;
   keywords: string[];
+  description: string | null;
 }
 
 export interface AssetViewerFace {
@@ -252,8 +254,25 @@ export interface AssetViewer {
   duplicate_of_asset_id?: string | null;
 }
 
-export async function getAssetViewer(assetId: string): Promise<AssetViewer> {
-  const { data } = await api.get<AssetViewer>(`/assets/${assetId}`);
+export interface AssetVersionHistoryResponse {
+  items: AssetVersionSummary[];
+}
+
+export async function listAssetVersions(assetId: string): Promise<AssetVersionHistoryResponse> {
+  const { data } = await api.get<AssetVersionHistoryResponse>(`/assets/${assetId}/versions`);
+  return data;
+}
+
+export async function getAssetViewer(
+  assetId: string,
+  opts?: { versionId?: string | null; versionNumber?: number | null },
+): Promise<AssetViewer> {
+  const { data } = await api.get<AssetViewer>(`/assets/${assetId}`, {
+    params: {
+      version_id: opts?.versionId ?? undefined,
+      version_number: opts?.versionNumber ?? undefined,
+    },
+  });
   return data;
 }
 
@@ -326,6 +345,25 @@ export async function updateAssetVersionTags(
   return data;
 }
 
+export interface AssetVersionDescriptionResponse {
+  asset_id: string;
+  version_id: string;
+  version_number: number;
+  description: string | null;
+}
+
+export async function updateAssetVersionDescription(
+  assetId: string,
+  versionId: string,
+  description: string | null,
+): Promise<AssetVersionDescriptionResponse> {
+  const { data } = await api.put<AssetVersionDescriptionResponse>(
+    `/assets/${assetId}/versions/${versionId}/description`,
+    { description },
+  );
+  return data;
+}
+
 export async function retryAssetPreview(
   assetId: string,
   versionId: string,
@@ -362,6 +400,7 @@ export interface AssetMetadata {
   other: Record<string, unknown> | null;
   rating: number | null;
   keywords: string[];
+  description: string | null;
   rendered_width: number | null;
   rendered_height: number | null;
   is_identity_source: boolean | null;

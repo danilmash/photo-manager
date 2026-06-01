@@ -59,6 +59,25 @@
     user-select: none;
 }
 
+.versionChip {
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.94);
+    background: rgba(15, 15, 15, 0.58);
+    backdrop-filter: blur(10px);
+    cursor: pointer;
+}
+
+.versionChip:hover {
+    background: rgba(15, 15, 15, 0.78);
+    border-color: rgba(255, 255, 255, 0.32);
+}
+
 .stage {
     position: relative;
     flex: 1 1 auto;

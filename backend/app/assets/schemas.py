@@ -53,6 +53,12 @@ class AssetVersionTagsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AssetVersionDescriptionUpdateRequest(BaseModel):
+    description: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AssetVersionStatusSchema(BaseModel):
     asset_id: UUID
     version_id: UUID
@@ -79,6 +85,13 @@ class AssetVersionTagsResponseSchema(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
+class AssetVersionDescriptionResponseSchema(BaseModel):
+    asset_id: UUID
+    version_id: UUID
+    version_number: int
+    description: str | None = None
+
+
 class AssetVersionSummarySchema(BaseModel):
     id: UUID
     version_number: int
@@ -90,6 +103,7 @@ class AssetVersionSummarySchema(BaseModel):
     faces_error: str | None = None
     recipe: dict[str, Any]
     keywords: list[str] = Field(default_factory=list)
+    description: str | None = None
     rendered_width: int | None = None
     rendered_height: int | None = None
     is_identity_source: bool
@@ -151,6 +165,7 @@ class AssetPhotoInfoSchema(BaseModel):
     focal_length: Any | None = None
     rating: int | None = None
     keywords: list[str] = Field(default_factory=list)
+    description: str | None = None
 
 
 class AssetViewerFacePersonCandidateSchema(BaseModel):
@@ -209,6 +224,7 @@ class AssetMetadataSchema(BaseModel):
     other: dict[str, Any] | None = None
     rating: int | None = None
     keywords: list[str] = Field(default_factory=list)
+    description: str | None = None
     rendered_width: int | None = None
     rendered_height: int | None = None
     is_identity_source: bool | None = None

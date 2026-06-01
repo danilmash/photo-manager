@@ -196,6 +196,7 @@ class AssetVersion(Base):
     other = Column(JSONB, nullable=True)
     rating = Column(Integer, nullable=True)
     keywords = Column(JSONB, nullable=False, default=list)
+    description = Column(Text, nullable=True)
     rendered_width = Column(Integer, nullable=True)
     rendered_height = Column(Integer, nullable=True)
     is_identity_source = Column(Boolean, nullable=False, default=False)

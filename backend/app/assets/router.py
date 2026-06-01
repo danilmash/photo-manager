@@ -41,6 +41,8 @@ from app.assets.schemas import (
     AssetMetadataSchema,
     AssetPhotoInfoSchema,
     AssetVersionCreateRequest,
+    AssetVersionDescriptionResponseSchema,
+    AssetVersionDescriptionUpdateRequest,
     AssetVersionHistoryResponseSchema,
     AssetVersionJobResponseSchema,
     AssetVersionStatusSchema,
@@ -81,6 +83,7 @@ router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
 MAX_VERSION_TAGS = 30
 MAX_TAG_LENGTH = 64
+MAX_VERSION_DESCRIPTION_LENGTH = 2000
 SPACE_RE = re.compile(r"\s+")
 
 
@@ -276,6 +279,17 @@ def _normalize_tag(value: str) -> str | None:
     return tag or None
 
 
+def _normalize_description(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = SPACE_RE.sub(" ", value.strip())
+    if not text:
+        return None
+    if len(text) > MAX_VERSION_DESCRIPTION_LENGTH:
+        text = text[:MAX_VERSION_DESCRIPTION_LENGTH].rstrip()
+    return text or None
+
+
 def _normalize_keywords(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -352,6 +366,7 @@ def _build_version_summary(
         faces_error=version.faces_error,
         recipe=normalize_recipe(version.recipe),
         keywords=_normalize_keywords(version.keywords),
+        description=version.description,
         rendered_width=version.rendered_width,
         rendered_height=version.rendered_height,
         is_identity_source=version.is_identity_source,
@@ -393,6 +408,7 @@ def _build_photo_info(
         focal_length=display["focal_length"],
         rating=version.rating if version else None,
         keywords=_normalize_keywords(version.keywords if version else None),
+        description=version.description if version else None,
     )
 
 
@@ -802,6 +818,7 @@ def create_asset_version(
         other=base_version.other if base_version else None,
         rating=base_version.rating if base_version else None,
         keywords=_normalize_keywords(base_version.keywords) if base_version else [],
+        description=None,
         is_identity_source=False,
     )
     db.add(version)
@@ -870,6 +887,34 @@ def update_asset_version_tags(
         version_id=version.id,
         version_number=version.version_number,
         keywords=keywords,
+    )
+
+
+@router.put(
+    "/{asset_id}/versions/{version_id}/description",
+    response_model=AssetVersionDescriptionResponseSchema,
+)
+def update_asset_version_description(
+    asset_id: uuid_mod.UUID,
+    version_id: uuid_mod.UUID,
+    body: AssetVersionDescriptionUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = _require_asset(db, asset_id)
+    _require_active_lifecycle(asset)
+    version = _get_version_or_404(db, asset_id, version_id=version_id)
+
+    description = _normalize_description(body.description)
+    version.description = description
+    db.commit()
+    db.refresh(version)
+
+    return AssetVersionDescriptionResponseSchema(
+        asset_id=asset.id,
+        version_id=version.id,
+        version_number=version.version_number,
+        description=description,
     )
 
 
@@ -1005,6 +1050,7 @@ def get_asset_metadata(
         other=version.other,
         rating=version.rating,
         keywords=_normalize_keywords(version.keywords),
+        description=version.description,
         rendered_width=version.rendered_width,
         rendered_height=version.rendered_height,
         is_identity_source=version.is_identity_source,

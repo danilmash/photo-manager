@@ -1,0 +1,43 @@
+.root {
+  display: grid;
+  gap: 8px;
+}
+
+.label {
+  font-weight: 700;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 96px;
+  box-sizing: border-box;
+  resize: vertical;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  padding: 10px;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.textarea:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted, #888);
+}
+
+.error {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger, #c62828);
+}

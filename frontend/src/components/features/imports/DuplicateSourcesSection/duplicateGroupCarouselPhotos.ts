@@ -18,6 +18,7 @@ function syntheticVersion(
     faces_error: null,
     recipe: {},
     keywords: [],
+    description: null,
     rendered_width: null,
     rendered_height: null,
     is_identity_source: false,
